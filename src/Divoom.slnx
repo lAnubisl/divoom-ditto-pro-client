@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Divoom.Client.Tests/Divoom.Client.Tests.csproj" />
+  <Project Path="Divoom.Client/Divoom.Client.csproj" />
+  <Project Path="Divoom.Transport.Windows/Divoom.Transport.Windows.csproj" />
+  <Project Path="Divoom.Transport.Linux/Divoom.Transport.Linux.csproj" />
+  <Project Path="Divoom.Api.Tests/Divoom.Api.Tests.csproj" />
+  <Project Path="Divoom.Api/Divoom.Api.csproj" />
+</Solution>
