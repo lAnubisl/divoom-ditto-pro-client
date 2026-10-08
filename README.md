@@ -16,7 +16,6 @@ Docker on Raspberry Pi. `Divoom.Api` is the application entry point;
 - [Configuration](#configuration)
 - [Client API](#client-api)
 - [Linux transport](#linux-transport)
-- [Device verification](#device-verification)
 - [References and licenses](#references-and-licenses)
 
 ## Projects and architecture
@@ -63,7 +62,8 @@ and a real Kestrel listener. Automated tests do not require Bluetooth hardware.
 ## Linux host setup
 
 Use a 64-bit Raspberry Pi OS with Bluetooth enabled and BlueZ running on the
-host. Select the Ditoo **Light** endpoint. The transport looks up the MAC address
+host. Select the Ditoo **Light** endpoint. Replace `AA:BB:CC:DD:EE:FF` in the
+examples below with its MAC address. The transport looks up the MAC address
 on the specified adapter and starts a bounded discovery session if it is unknown.
 It stops its own discovery session after finding the device or on failure.
 
@@ -79,8 +79,8 @@ the device on the host. Release any phone connection first. Start an interactive
 ```text
 agent NoInputNoOutput
 default-agent
-pair B1:21:81:4B:E6:42
-trust B1:21:81:4B:E6:42
+pair AA:BB:CC:DD:EE:FF
+trust AA:BB:CC:DD:EE:FF
 quit
 ```
 
@@ -98,7 +98,7 @@ the Pi as `compose.yaml`. With Docker
 Compose installed, run from the directory containing that file:
 
 ```sh
-export DIVOOM_ADDRESS=B1:21:81:4B:E6:42
+export DIVOOM_ADDRESS=AA:BB:CC:DD:EE:FF
 export DIVOOM_API_KEY="$(openssl rand -hex 32)"
 export DIVOOM_IMAGE=panfilenok/divoom-ditto-pro-client:latest
 
@@ -167,7 +167,7 @@ Containers restart after reboot and log files are limited to three files of 10 M
 Without Docker on Linux, set the same variables and run:
 
 ```sh
-export DIVOOM_ADDRESS=B1:21:81:4B:E6:42
+export DIVOOM_ADDRESS=AA:BB:CC:DD:EE:FF
 export DIVOOM_API_KEY="$(openssl rand -hex 32)"
 
 dotnet run --project src/Divoom.Api -f net10.0 -- --urls http://0.0.0.0:8080
@@ -176,7 +176,7 @@ dotnet run --project src/Divoom.Api -f net10.0 -- --urls http://0.0.0.0:8080
 On Windows, the Windows target selects `WindowsBleTransport` automatically:
 
 ```powershell
-$env:DIVOOM_ADDRESS = 'B1:21:81:4B:E6:42'
+$env:DIVOOM_ADDRESS = 'AA:BB:CC:DD:EE:FF'
 $env:DIVOOM_API_KEY = '<your-api-key>'
 dotnet run --project src/Divoom.Api -f net10.0-windows10.0.19041.0 -- --urls http://127.0.0.1:8080
 ```
@@ -341,8 +341,8 @@ time synchronization and does not change the startup channel. Resend an image
 or animation to display that content again. Physical rendering is not confirmed
 by the acknowledgement.
 `TIME_SENT` logs the sampled timestamp. A time-command acknowledgement confirms
-receipt; device clock readback/display verification is not available on the
-tested firmware. The extended `BD 2E` read-time query did not return a time reply.
+receipt; the client does not verify the device clock through readback or visual
+inspection.
 
 Images preserve up to 128 colors, quantize larger palettes, and use a rolling
 preamble counter. Solid colors use Lighting. A checksum-valid sequence response
@@ -383,7 +383,7 @@ initialization remain in `DittoProClient`.
 using Divoom;
 
 await using IDittoProClient client = new DittoProClient(
-    new BlueZBleTransport("B1:21:81:4B:E6:42", new BlueZTransportOptions
+    new BlueZBleTransport("AA:BB:CC:DD:EE:FF", new BlueZTransportOptions
     {
         Adapter = "hci0",
         BusAddress = "unix:path=/run/dbus/system_bus_socket"
@@ -418,40 +418,6 @@ await client.SendCurrentDateTimeAsync(); // Reuses the same initialized connecti
 - Tests run an actual local D-Bus server over loopback TCP, without requiring
   BlueZ hardware. They cover wire types, subscriptions, writes, discovery,
   cancellation, errors, negotiated/fallback MTU, reconnect and idempotent disposal.
-
-## Device verification
-
-### Windows â€” 2026-10-06
-
-On 2026-10-06 the Windows-target API was tested against DitooPro-Light at
-`B1:21:81:4B:E6:42`. Two authenticated HTTP requests to `/api/time/current`
-returned 200 with device acknowledgements. The second reused the initialized
-session (about 0.3 seconds versus 9.3 seconds for the first). The test host was
-stopped afterwards. Device clock readback was not verified.
-
-The same Windows session also sent a test image and `assets/mail-14.gif`
-(9 frames). The user confirmed animated playback after API shutdown; earlier
-static images and native animations were also visually confirmed.
-
-After a power cycle the device displayed the clock. Automatic animation
-restoration at startup is not implemented; file persistence is unknown.
-The extended `BD 2E` clock query timed out on the tested firmware.
-
-### Raspberry Pi â€” 2026-10-07
-
-The implementation and Web API have been built and tested on Windows, with a
-cross-publish for `linux-arm64`. On 2026-10-07 the published application was run
-in Docker on a Raspberry Pi 3 Model B with Debian 13 ARM64. After host pairing,
-the time command and a nine-frame animation returned HTTP 200. The time command
-was acknowledged by the device. Physical display rendering and clock readback
-were not visually verified.
-Earlier reconnect tests were intermittent. After updating the device address to
-`B1:21:81:4B:E6:43`, replacing the power cable/supply, removing a metal heatsink,
-and positioning the Pi about one metre from Divoom, BLE RSSI improved to
--64..-72 dBm and `vcgencmd get_throttled` returned `0x0`. Time and animation
-requests passed after a host reboot and again after a container restart; a
-repeated animation also passed. The effects of the individual physical changes
-were not isolated. Visual playback from the Pi still needs user confirmation.
 
 ## References and licenses
 
