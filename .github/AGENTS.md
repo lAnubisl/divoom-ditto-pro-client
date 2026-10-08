@@ -1,7 +1,8 @@
 # GitHub Actions guidance
 
-- `workflows/docker-publish.yml` runs only for pushes to `main` and tags matching `v*`.
-  Do not add pull-request or manual publishing triggers without a requested scope change.
+- `workflows/docker-publish.yml` runs on pushes to `main` and tags matching `v*`,
+  and supports manual runs. Keep the build job restricted to `main` and `v*` tags,
+  including manual runs. Do not add pull-request publishing without a requested scope change.
 - Build and test natively on `ubuntu-24.04-arm`; publish `linux/arm64` for 64-bit Pi OS.
 - CI builds the portable API and runs both NUnit projects before publishing. Do not
   replace the portable build with a Linux build of the Windows-containing solution.

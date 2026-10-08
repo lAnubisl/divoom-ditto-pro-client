@@ -32,7 +32,8 @@ Directory-specific `AGENTS.md` files add guidance to these repository-wide rules
 - Raspberry Pi deployment uses Docker Hub images on 64-bit ARM64 OS. Keep the root
   `Dockerfile` for CI builds and the Compose example in `docs/`; do not reintroduce
   local Pi builds or precompiled-output Dockerfiles into the deployment instructions.
-- Publishing runs only on pushes to `main` and `v*` tags. `latest` belongs to `main`.
+- Publishing runs on pushes or manual runs for `main` and `v*` tags.
+  `latest` belongs to `main`.
 - Keep credentials in environment configuration or GitHub Actions secrets/variables.
 - Distinguish automated test results, device acknowledgements, and user-confirmed
   visual behavior. An acknowledgement does not prove rendering or persistence.

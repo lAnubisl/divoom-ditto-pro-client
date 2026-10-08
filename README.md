@@ -140,7 +140,9 @@ repository under **Settings > Secrets and variables > Actions**:
 | Secret | `DOCKERHUB_TOKEN` | Docker Hub access token with Read & Write permission for the image repository |
 | Variable (optional) | `DOCKERHUB_IMAGE` | Override the full image name; defaults to `panfilenok/divoom-ditto-pro-client` |
 
-The workflow runs only on pushes to `main` and tags matching `v*`.
+The workflow runs on pushes to `main` and tags matching `v*`. To run it manually,
+open **Actions > Raspberry Pi Docker image > Run workflow** and select `main`.
+Manual runs also support `v*` tags via the GitHub CLI or API; other branches are skipped.
 Pushes to `main` publish `latest` and a
 `sha-<commit>` tag. Pushing a semantic version tag such as `v1.2.3` publishes
 `1.2.3`, `1.2`, and a commit tag; it does not replace `latest`.
