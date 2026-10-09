@@ -1,5 +1,7 @@
 # Divoom Web API
 
+![Divoom Web API banner featuring a Ditoo Pro pixel display](assets/repository-hero-v2.png)
+
 Authenticated Web API for the Divoom Ditoo Pro: images, looping GIF animations
 and date/time over Bluetooth. Supports Windows BLE and Linux BlueZ, including
 Docker on Raspberry Pi. `Divoom.Api` is the application entry point;
@@ -184,6 +186,11 @@ dotnet run --project src/Divoom.Api -f net10.0-windows10.0.19041.0 -- --urls htt
 Windows state defaults to `%LOCALAPPDATA%\Divoom.Api`; Linux defaults to `/data`.
 
 ## HTTP API
+
+For a separate gallery or other network client application, use the standalone
+[HTTP client agent guide](docs/http-client-agent-guide.md). It defines the
+device integration boundary, request/response contract, and client error handling
+without requiring Bluetooth or protocol code in the consuming application.
 
 All routes, including health, require an `X-Api-Key` header. The API reads the
 key from `DIVOOM_API_KEY`. Startup fails if the key or device address is missing.
