@@ -201,7 +201,7 @@ Run the following examples from the repository root.
 | GET | `/api/health` | None; API liveness without Bluetooth connection |
 | POST | `/api/images` | Raw PNG, JPEG, BMP or GIF bytes (first GIF frame) |
 | POST | `/api/animations` | Raw animated GIF bytes |
-| POST | `/api/display/clock` | None; select the built-in clock display |
+| POST | `/api/display/clock` | Optional JSON: {"style":0,"color":"#00FF00"}; no body uses these defaults |
 | POST | `/api/time/current` | None; current time in configured `TZ` |
 | POST | `/api/time` | JSON: `{"value":"2026-10-06T12:34:56+02:00"}` |
 
@@ -210,6 +210,11 @@ image MIME type or `application/octet-stream`. Images resize to 16x16; GIF frame
 delays are preserved. The key is accepted only in the header, never in the URL.
 
 To switch displays, upload an image or animation, or call `/api/display/clock`.
+Clock selection accepts an optional JSON body with `style` (integer 0..15) and
+`color` (RGB hex string `#RRGGBB`, case-insensitive). Omitted fields default to
+style `0` and green `#00FF00`. Existing requests without a body remain supported;
+the success response is unchanged. Invalid settings return HTTP 400 before sending
+device commands. Style `14` produced a blank screen during local testing.
 Clock selection returns `{"status":"sent","mode":"clock"}` after device
 acknowledgement. It does not set the time or change the power-on default mode.
 The `/api/time` endpoints synchronize time without selecting the clock display.
@@ -299,7 +304,8 @@ await client.SendAnimationAsync(new[]
     new DittoAnimationFrame(secondImage, TimeSpan.FromMilliseconds(500))
 });
 await client.SendCurrentDateTimeAsync();
-await client.ShowClockAsync(); // Select the built-in clock display.
+await client.ShowClockAsync(); // Style 0, green on a dark background.
+await client.ShowClockAsync(0, 0x00FF00); // Explicit style and RGB color.
 ```
 
 `Divoom.Client` includes portable file decoding through `DittoMedia`:
@@ -342,8 +348,14 @@ SetUTC and binary time synchronization. `SendDateTimeAsync(DateTimeOffset)`
 can send an explicit wall-clock value. Host NTP synchronization is not verified.
 The binary year fields are `year % 100` and `year / 100` (decimal century).
 
-`ShowClockAsync` sends the BLE clock channel command (`45 00`) and waits for
-its sequence acknowledgement. It selects the live display independently of
+`ShowClockAsync` sends the BLE clock settings command
+(`45 00 01 STYLE 01 00 00 00 RR GG BB`) and waits for
+its sequence acknowledgement. The existing cancellation-token overload defaults
+to style `0` and green `#00FF00`; the new overload accepts style and RGB color.
+The command uses 24-hour format and disables weather, temperature and calendar.
+In local testing on 2026-10-10, the user confirmed green digits on a dark background
+with style `0`. Rendering and persistence of other combinations are not guaranteed.
+It selects the live display independently of
 time synchronization and does not change the startup channel. Resend an image
 or animation to display that content again. Physical rendering is not confirmed
 by the acknowledgement.

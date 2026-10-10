@@ -115,11 +115,20 @@ public sealed class DittoProClient : IDittoProClient
 
     /// <inheritdoc />
     public Task ShowClockAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async token =>
+        ShowClockAsync(0, 0x00FF00, cancellationToken);
+
+    /// <inheritdoc />
+    public Task ShowClockAsync(byte style, uint color, CancellationToken cancellationToken = default)
+    {
+        if (style > 15) throw new ArgumentOutOfRangeException(nameof(style));
+        if (color > 0xFFFFFF) throw new ArgumentOutOfRangeException(nameof(color));
+        return RunAsync(async token =>
         {
-            await SendPayloadAsync([0x45, 0x00], token);
-            options.Log?.Invoke("CLOCK_SELECTED: clock channel command acknowledged; display rendering is not verified.");
+            await SendPayloadAsync([0x45, 0x00, 0x01, style, 0x01, 0x00, 0x00, 0x00,
+                (byte)(color >> 16), (byte)(color >> 8), (byte)color], token);
+            options.Log?.Invoke($"CLOCK_SELECTED: style={style}; color=#{color:X6}; command acknowledged; display rendering is not verified.");
         }, cancellationToken);
+    }
 
     private DateTimeOffset CurrentTime() => TimeZoneInfo.ConvertTime(options.TimeProvider.GetUtcNow(), options.TimeZone);
 

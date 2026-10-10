@@ -54,7 +54,7 @@ public sealed class ClientTests
             await client.SendCurrentDateTimeAsync(); await client.SendAnimationAsync(frames);
             var beforeClock = transport.Packets.Count;
             await client.ShowClockAsync();
-            Assert.That(transport.Packets.Count == beforeClock + 1 && transport.Packets[^1].AsSpan(11, 2).SequenceEqual(new byte[] { 0x45, 0x00 }), Is.True, "Clock selects the built-in channel without syncing time or changing startup settings");
+            Assert.That(transport.Packets.Count == beforeClock + 1 && transport.Packets[^1].AsSpan(11, 11).SequenceEqual(new byte[] { 0x45, 0x00, 1, 0, 1, 0, 0, 0, 0, 255, 0 }), Is.True, "Clock selects style zero in green without syncing time or changing startup settings");
             Assert.That(((FixedClock)settings.TimeProvider).Calls == 2, Is.True, "Current time sampled at initialization and explicit time request");
             Assert.That(transport.ConnectCount == 1 && transport.Packets.Count(p => p[11] == 0x7B) == 1 && transport.IsConnected, Is.True, "Operations reuse one initialized connection");
             using var json = JsonDocument.Parse(transport.Packets[0].AsMemory(11, transport.Packets[0].Length - 13));
@@ -88,6 +88,25 @@ public sealed class ClientTests
             await Assert.ThatAsync(async () => await client.SendImageAsync(image), Throws.InstanceOf<ObjectDisposedException>());
         }
         Assert.That(transport.Disposed && !transport.IsConnected, Is.True, "Transport disposed by client");
+    }
+
+    [Test]
+    public async Task ClockAppearanceUsesRgbBytesAndValidatesBeforeConnecting()
+    {
+        var transport = new FakeTransport();
+        await using IDittoProClient client = new DittoProClient(transport, Options());
+        Assert.Throws<ArgumentOutOfRangeException>(() => client.ShowClockAsync(16, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => client.ShowClockAsync(0, 0x1000000));
+        Assert.That(transport.ConnectCount, Is.Zero);
+        await client.ShowClockAsync(15, 0x123456);
+        Assert.That(transport.Packets[^1].AsSpan(11, 11).ToArray(),
+            Is.EqualTo(new byte[] { 0x45, 0, 1, 15, 1, 0, 0, 0, 0x12, 0x34, 0x56 }));
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        var count = transport.Packets.Count;
+        await Assert.ThatAsync(async () => await client.ShowClockAsync(1, 0, cancelled.Token), Throws.InstanceOf<OperationCanceledException>());
+        Assert.That(transport.Packets.Count, Is.EqualTo(count));
+        Assert.That(transport.IsConnected, Is.True);
     }
 
     [Test]

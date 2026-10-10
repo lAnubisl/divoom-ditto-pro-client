@@ -108,6 +108,42 @@ public sealed class ApiTests
     }
 
     [Test]
+    [TestCase("", 0, 0x00FF00u)]
+    [TestCase("{}", 0, 0x00FF00u)]
+    [TestCase("{\"style\":15}", 15, 0x00FF00u)]
+    [TestCase("{\"color\":\"#123aBc\"}", 0, 0x123ABCu)]
+    [TestCase("{\"style\":1,\"color\":\"#000000\"}", 1, 0u)]
+    public async Task ClockAppearanceDefaultsAndOverrides(string json, int style, uint color)
+    {
+        http.DefaultRequestHeaders.Add("X-Api-Key", key);
+        using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        using var response = await http.PostAsync("/api/display/clock", content);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await response.Content.ReadAsStringAsync(), Is.EqualTo("{\"status\":\"sent\",\"mode\":\"clock\"}"));
+        Assert.That(device.ClockStyle, Is.EqualTo(style));
+        Assert.That(device.ClockColor, Is.EqualTo(color));
+        Assert.That(device.Clocks, Is.EqualTo(1));
+    }
+
+    [TestCase("{\"style\":-1}")]
+    [TestCase("{\"style\":16}")]
+    [TestCase("{\"style\":1.5}")]
+    [TestCase("{\"color\":null}")]
+    [TestCase("{\"color\":\"00FF00\"}")]
+    [TestCase("{\"color\":\"#GGFF00\"}")]
+    [TestCase("{\"color\":\"#123\"}")]
+    [TestCase("{\"color\":\"#00000000\"}")]
+    [TestCase("{\"color\":123}")]
+    [TestCase("{")]
+    public async Task InvalidClockAppearanceDoesNotSendCommands(string json)
+    {
+        http.DefaultRequestHeaders.Add("X-Api-Key", key);
+        using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        await Status(await http.PostAsync("/api/display/clock", content), HttpStatusCode.BadRequest);
+        Assert.That(device.Clocks, Is.Zero);
+    }
+
+    [Test]
     public async Task InvalidRequestsDoNotReachDevice()
     {
         http.DefaultRequestHeaders.Add("X-Api-Key", key);

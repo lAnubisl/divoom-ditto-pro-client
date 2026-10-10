@@ -70,7 +70,7 @@ operation completes or fails.
 | `GET /api/health` | No body | `{"status":"ok"}` |
 | `POST /api/images` | Raw PNG, JPEG, BMP, or GIF file bytes | `{"status":"sent","width":16,"height":16}` |
 | `POST /api/animations` | Raw GIF file bytes | `{"status":"sent","frames":9}` (frame count varies) |
-| `POST /api/display/clock` | No body | `{"status":"sent","mode":"clock"}` |
+| `POST /api/display/clock` | Optional JSON with `style` and `color`; no body uses defaults | `{"status":"sent","mode":"clock"}` |
 | `POST /api/time/current` | No body | `{"status":"sent"}` |
 | `POST /api/time` | JSON with `value`, an ISO 8601 timestamp with UTC offset | `{"status":"sent"}` |
 
@@ -104,6 +104,23 @@ file contents; it does not enable other media formats.
   artwork data, into a supported image or GIF before uploading.
 
 ### Clock and time
+
+`POST /api/display/clock` accepts an optional JSON body:
+
+```json
+{"style":0,"color":"#00FF00"}
+```
+
+`style` is an integer from 0 to 15. `color` is an RGB hex string in `#RRGGBB`
+format (hex digits are case-insensitive). Each omitted field defaults independently:
+style `0`, green `#00FF00`. Existing requests without a body remain supported and
+use the same defaults. The success JSON remains `{"status":"sent","mode":"clock"}`.
+Invalid settings return HTTP 400 without sending device commands; JSON bodies
+require `Content-Type: application/json` (unsupported content types return 415).
+Clock selection uses 24-hour format and disables weather, temperature and calendar.
+Local user inspection on 2026-10-10 confirmed green digits on a dark background
+for style `0`; style `14` produced a blank screen. Do not assume every accepted
+style/color combination renders or survives power cycling.
 
 `/api/time/current` uses the API server's current time and configured timezone
 (`TZ`, default `Europe/Amsterdam`). It does not use the gallery application's
