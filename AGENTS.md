@@ -8,6 +8,7 @@ Directory-specific `AGENTS.md` files add guidance to these repository-wide rules
 ## Project map
 
 - `src/Divoom.Client`: portable protocol, media conversion, and client lifecycle.
+- `src/Divoom.Audio`: portable audio contracts and playback/session lifecycle.
 - `src/Divoom.Transport.Linux`: BlueZ over host system D-Bus.
 - `src/Divoom.Transport.Windows`: Windows GATT and RFCOMM/discovery support.
 - `src/Divoom.Api`: authenticated ASP.NET Core API and application configuration.

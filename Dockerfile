@@ -1,11 +1,14 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
+COPY src/Divoom.Audio/ src/Divoom.Audio/
 COPY src/Divoom.Client/ src/Divoom.Client/
 COPY src/Divoom.Transport.Linux/ src/Divoom.Transport.Linux/
 COPY src/Divoom.Api/ src/Divoom.Api/
 RUN dotnet publish src/Divoom.Api/Divoom.Api.csproj -c Release -f net10.0 -o /out --self-contained false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+RUN apt-get update && apt-get install -y --no-install-recommends mpv ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /out/ .
 ENV DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket \

@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Divoom.Api.Tests" />
+    <ProjectReference Include="../Divoom.Audio/Divoom.Audio.csproj" />
     <ProjectReference Include="../Divoom.Client/Divoom.Client.csproj" />
     <PackageReference Include="Tmds.DBus" Version="0.95.1" />
   </ItemGroup>

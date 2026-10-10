@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="Divoom.Audio/Divoom.Audio.csproj" />
   <Project Path="Divoom.Client.Tests/Divoom.Client.Tests.csproj" />
   <Project Path="Divoom.Client/Divoom.Client.csproj" />
   <Project Path="Divoom.Transport.Windows/Divoom.Transport.Windows.csproj" />

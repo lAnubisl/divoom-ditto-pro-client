@@ -14,6 +14,7 @@ internal static class ApiExceptionResponse
             TimeoutException => (504, "Device operation timed out."),
             OperationCanceledException when context.RequestAborted.IsCancellationRequested => (499, "Request cancelled."),
             OperationCanceledException => (504, "Device operation timed out or the service is stopping."),
+            Divoom.AudioUnavailableException => (503, "Audio playback is unavailable."),
             IOException or Tmds.DBus.DBusException or Tmds.DBus.DisconnectedException => (503, "Bluetooth device is unavailable."),
             _ => (500, "An unexpected server error occurred.")
         };

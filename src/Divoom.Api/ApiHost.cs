@@ -23,6 +23,9 @@ public static class ApiHost
         builder.Services.AddAuthorization(options => options.FallbackPolicy = new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser().Build());
         builder.Services.AddProblemDetails();
+        builder.Services.AddSingleton<AudioStreamPolicy>();
+        builder.Services.AddSingleton<IDivoomAudioPlayer>(_ => AudioPlayerFactory.Create(builder.Configuration));
+        builder.Services.AddHostedService<AudioPlaybackLifetime>();
         builder.Services.AddSingleton<IDittoProClient>(services =>
         {
             var directory = builder.Configuration["DIVOOM_STATE_DIRECTORY"] ?? (OperatingSystem.IsWindows()
@@ -52,6 +55,7 @@ public static class ApiHost
         AnimationEndpoints.Map(api);
         TimeEndpoints.Map(api);
         DisplayEndpoints.Map(api);
+        AudioEndpoints.Map(api);
         return app;
     }
 }
