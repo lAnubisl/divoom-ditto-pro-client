@@ -4,7 +4,9 @@
 
 Authenticated Web API for the Divoom Ditoo Pro: images, looping GIF animations
 and date/time over Bluetooth. Supports Windows BLE and Linux BlueZ, including
-Docker on Raspberry Pi. `Divoom.Api` is the application entry point;
+Docker on Raspberry Pi. Optional Windows and Linux audio playback accepts trusted online
+stream URLs and plays them through an explicitly configured audio output.
+`Divoom.Api` is the application entry point;
 `Divoom.Client` can also be used directly from .NET applications.
 
 ## Contents
@@ -16,6 +18,7 @@ Docker on Raspberry Pi. `Divoom.Api` is the application entry point;
 - [Run without Docker](#run-without-docker)
 - [HTTP API](#http-api)
 - [Configuration](#configuration)
+- [Audio playback](#audio-playback)
 - [Client API](#client-api)
 - [Linux transport](#linux-transport)
 - [References and licenses](#references-and-licenses)
@@ -27,8 +30,10 @@ Docker on Raspberry Pi. `Divoom.Api` is the application entry point;
 - `Divoom.Client`: protocol, acknowledgements, initialization, lazy connection,
   session reuse and disposal through `IDittoProTransport`, plus managed
   PNG/JPEG/BMP/GIF decoding and resizing to 16x16.
+- `Divoom.Audio`: portable audio player contracts and session lifecycle, separate
+  from the BLE display protocol. Windows MediaPlayer and Linux mpv backends live in their respective transports.
 - `Divoom.Transport.Windows`: Windows GATT/RFCOMM channels and discovery.
-- `Divoom.Transport.Linux`: BlueZ BLE/GATT channel through host system D-Bus.
+- `Divoom.Transport.Linux`: BlueZ BLE/GATT channel through host system D-Bus, and mpv/PulseAudio playback.
 - `Divoom.Client.Tests`: protocol, media, lifecycle and local D-Bus tests.
 - `Divoom.Api.Tests`: HTTP authentication, validation, errors, lifetime and Kestrel tests.
 
@@ -204,6 +209,10 @@ Run the following examples from the repository root.
 | POST | `/api/display/clock` | Optional JSON: {"style":0,"color":"#00FF00"}; no body uses these defaults |
 | POST | `/api/time/current` | None; current time in configured `TZ` |
 | POST | `/api/time` | JSON: `{"value":"2026-10-06T12:34:56+02:00"}` |
+| PUT | `/api/audio/playback` | JSON: `{"url":"https://ice5.somafm.com/groovesalad-128-mp3","volume":0.25}`; start or replace audio |
+| GET | `/api/audio/playback` | No body; current audio state |
+| PATCH | `/api/audio/playback` | JSON: `{"volume":0.15}`; volume 0..1 |
+| DELETE | `/api/audio/playback` | No body; stop audio |
 
 Uploads use raw file bytes, not multipart form data. Set `Content-Type` to the
 image MIME type or `application/octet-stream`. Images resize to 16x16; GIF frame
@@ -245,16 +254,18 @@ curl --fail-with-body -X POST \
   --data '{"value":"2026-10-06T12:34:56+02:00"}' "$API/api/time"
 ```
 
-Success: HTTP 200, JSON `{"status":"sent"}`. Image responses also include
+Display/time success: HTTP 200, JSON `{"status":"sent"}`. Image responses also include
 `width`/`height`; animation responses include `frames`. This means the client
 completed the acknowledged operation, not visual inspection of the display.
 Health returns `{"status":"ok"}`.
+Audio start instead returns HTTP 202 and a `Location: /api/audio/playback` header;
+audio commands/status return the playback state described below.
 
 Errors use Problem JSON: 401 for absent/invalid keys, 400 for invalid input,
 413 for bodies over 2 MiB, 415 for unsupported media types, 503 for unavailable
-Bluetooth and 504 for timeouts. Responses omit private transport exception
+Bluetooth/audio output and 504 for timeouts. Responses omit private transport exception
 details. Input images have a 1,048,576-pixel limit per frame; animations also
-obey the client's native upload size limit. Operations have a 180-second deadline
+obey the client's native upload size limit. Display/time operations have a 180-second deadline
 and cancel when the request aborts or the host stops.
 
 ## Configuration
@@ -269,13 +280,171 @@ and cancel when the request aborts or the host stops.
 | `TZ` | `Europe/Amsterdam` |
 | `DIVOOM_STATE_DIRECTORY` | `/data` |
 | `DBUS_SYSTEM_BUS_ADDRESS` | `unix:path=/run/dbus/system_bus_socket` |
+| `DIVOOM_AUDIO_DEVICE` | Windows render endpoint ID/name or Linux PulseAudio sink name; unset disables audio |
+| `DIVOOM_AUDIO_ALLOWED_HOSTS` | Comma-separated trusted stream hostnames; required to accept audio URLs; no wildcard or implicit defaults |
+| `PULSE_SERVER` | Linux only: PulseAudio/PipeWire socket address when outside the host user's normal session |
 
-Each HTTP device operation has a 180-second deadline shared by all retry
+Each HTTP display/time operation has a 180-second deadline shared by all retry
 attempts. Operations cancel when the request aborts or the host stops.
 Bluetooth I/O failures and timeouts retry up to three total attempts, waiting
 one second after disconnecting between attempts. Each retry reconnects and
 resends the entire operation; a lost acknowledgement may cause duplicate
 delivery. Cancellation stops retries.
+These deadlines/retries apply to display and time commands. Audio commands have
+a separate 15-second command deadline and a 20-second playback startup deadline.
+
+## Audio playback
+
+### Windows audio
+
+Pair **DitooPro-Audio** through **Windows Settings > Bluetooth & devices** and
+connect it before starting playback. Pairing is an OS provisioning step; the API
+does not pair/unpair devices, change the system default output, or fall back to
+another speaker. `DIVOOM_ADDRESS` still identifies the **Light** display endpoint.
+Audio uses the separately configured Windows render endpoint, not that BLE address.
+
+For example, with this Windows render endpoint name:
+
+```powershell
+$env:DIVOOM_AUDIO_DEVICE = 'Headphones (DitooPro-Audio)'
+$env:DIVOOM_AUDIO_ALLOWED_HOSTS = 'ice5.somafm.com'
+# Set DIVOOM_ADDRESS and DIVOOM_API_KEY as in Run without Docker.
+dotnet run --project src/Divoom.Api -f net10.0-windows10.0.19041.0 -- --urls http://127.0.0.1:8080
+```
+
+Use the exact name shown by Windows on your system, or its audio endpoint ID.
+An absent, disabled, or ambiguous output produces HTTP 503; the player never
+silently selects the default speaker. Music uses the A2DP output. Opening the
+Ditoo microphone can switch to the lower-quality hands-free audio profile.
+This version does not expose microphone capture or simultaneous music/capture.
+
+```powershell
+$audioHeaders = @{ 'X-Api-Key' = $env:DIVOOM_API_KEY }
+$audioApi = 'http://127.0.0.1:8080/api/audio/playback'
+Invoke-RestMethod -Method Put -Uri $audioApi -Headers $audioHeaders `
+    -ContentType 'application/json' `
+    -Body '{"url":"https://ice5.somafm.com/groovesalad-128-mp3","volume":0.25}'
+Invoke-RestMethod -Uri $audioApi -Headers $audioHeaders
+Invoke-RestMethod -Method Patch -Uri $audioApi -Headers $audioHeaders `
+    -ContentType 'application/json' -Body '{"volume":0.15}'
+Invoke-RestMethod -Method Delete -Uri $audioApi -Headers $audioHeaders
+```
+
+Supply a **direct HTTPS audio stream** URL, not a station's HTML page or playlist
+file. MP3 radio streaming has been tested with Windows MediaPlayer and Linux mpv on Ditoo;
+other formats/stations need verification. Initial URLs must use port 443, match
+an exact configured hostname, contain no URL credentials or fragment, and be at
+most 2048 characters. Invalid URLs/volume return HTTP 400 before opening audio.
+Only configure trusted station providers: the platform media engine handles
+redirects and referenced media internally, and the host allowlist checks the
+initial URL only. It is not a network sandbox for an untrusted media provider.
+The device API key is never forwarded to the station.
+
+One stream can play at a time. A different URL replaces it; the same URL updates
+volume without restarting an active stream. Omitted start volume defaults to
+0.25. Volume is player gain (0..1), not a change to system-wide volume. Playback
+continues after the start HTTP request completes and ends on DELETE, replacement,
+stream completion/failure, or application shutdown. The player does not reconnect
+automatically after a failed stream. After receiving 202, poll GET for state:
+
+```json
+{"state":"playing","volume":0.25,"error":null}
+```
+
+States are `stopped`, `starting`, `buffering`, `playing`, `failed`, and
+`unavailable`. Errors are stable codes: `startup_timeout`, `stream_failed`,
+`audio_not_configured`, or `platform_unsupported`; platform exceptions and source
+URLs are omitted from status. `playing` is reported by the media backend; it does not
+prove that the physical speaker is audible.
+
+Audio is optional. Unset `DIVOOM_AUDIO_DEVICE` reports `unavailable` and valid
+start/volume commands return HTTP 503, while display commands remain available.
+
+### Linux and Raspberry Pi audio
+
+The portable API uses **mpv** and an explicitly selected PulseAudio sink; a
+PipeWire host with `pipewire-pulse` is supported. BlueZ pairing and the audio
+server run on the host. The container image includes mpv but does not start an
+audio server. Mounting the BlueZ D-Bus alone is insufficient for audio.
+
+On Debian 13, install and enable host audio as the login user that will own the
+audio server:
+
+```bash
+sudo apt-get update
+sudo apt-get install --no-install-recommends pipewire pipewire-pulse wireplumber libspa-0.2-bluetooth pulseaudio-utils
+sudo loginctl enable-linger "$(id -un)"
+mkdir -p ~/.config/wireplumber/wireplumber.conf.d
+cat > ~/.config/wireplumber/wireplumber.conf.d/51-divoom-headless.conf <<'EOF'
+wireplumber.profiles = {
+  main = {
+    monitor.bluez.seat-monitoring = disabled
+  }
+}
+EOF
+systemctl --user enable --now pipewire.socket pipewire-pulse.socket wireplumber.service
+systemctl --user restart wireplumber
+```
+
+The WirePlumber setting permits Bluetooth audio in a headless user session
+([Bluetooth configuration](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/bluetooth.html)).
+Release DitooPro-Audio from other computers/phones and enable pairing. Use
+`bluetoothctl` to pair/trust it and connect Audio Sink. Replace the example address
+below with the address discovered for **DitooPro-Audio**:
+
+```text
+agent NoInputNoOutput
+default-agent
+scan bredr
+pair AA:BB:CC:DD:EE:FF
+trust AA:BB:CC:DD:EE:FF
+connect AA:BB:CC:DD:EE:FF 0000110b-0000-1000-8000-00805f9b34fb
+scan off
+quit
+```
+
+Run `pactl list short sinks` and use the exact `bluez_output...` name for
+`DIVOOM_AUDIO_DEVICE`. Run `pactl list cards` to confirm an A2DP profile; a
+hands-free profile gives lower-quality audio. Sink names can change after a
+profile change: update configuration and restart the API. `auto`, `default`,
+and symbolic default sinks are rejected. An absent sink returns HTTP 503.
+
+For a non-container API, also install `mpv`, set the two audio variables, and
+run the portable `net10.0` target. It must reach the host Pulse server; set
+`PULSE_SERVER=unix:/run/user/1000/pulse/native` when needed (adjust the UID).
+
+For Docker, copy the normal [Compose example](docs/compose.yaml) to the Pi and
+add these entries to its existing service's `environment` and `volumes`:
+
+```yaml
+    environment:
+      # Keep the existing address, API key and other settings.
+      DIVOOM_AUDIO_DEVICE: ${DIVOOM_AUDIO_DEVICE:?Set the exact Bluetooth sink name}
+      DIVOOM_AUDIO_ALLOWED_HOSTS: ${DIVOOM_AUDIO_ALLOWED_HOSTS:?Set trusted station hosts}
+      PULSE_SERVER: unix:/run/divoom-pulse/native
+    volumes:
+      # Keep the existing D-Bus mount and state volume.
+      - ${DIVOOM_PULSE_DIRECTORY:-/run/user/1000/pulse}:/run/divoom-pulse:ro
+```
+
+Set `DIVOOM_AUDIO_DEVICE` and `DIVOOM_AUDIO_ALLOWED_HOSTS` in the Pi's `.env`
+alongside `compose.yaml`. Set the Compose-only `DIVOOM_PULSE_DIRECTORY` there
+to the host audio user's socket directory if its UID is not 1000. Find it with
+`echo "/run/user/$(id -u)/pulse"` as that user, and check that
+`test -S /run/user/$(id -u)/pulse/native` succeeds before starting the container.
+Then use the normal Docker Hub pull/up commands.
+The shown socket setup was verified with PipeWire and the service's root
+container user. Other PulseAudio server policies may require additional
+socket authentication. Do not expose the Pulse server over TCP.
+
+The Linux player controls its own mpv process through a private Unix socket,
+waits for audio initialization before reporting `playing`, and terminates that
+process on stop, failure, replacement or shutdown. It disables null-output
+fallback and requests PipeWire not to move the stream when its sink disappears.
+TLS certificate verification is explicitly enabled. The mpv environment retains
+only selected audio/session, proxy, locale and certificate settings, excluding
+the API's configuration and key. The process still runs with the API's user
+permissions; this is not a media-process sandbox.
 
 ## Client API
 

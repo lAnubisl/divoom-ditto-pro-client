@@ -61,9 +61,9 @@ direct cross-origin browser calls will work.
 
 ## HTTP contract
 
-All successful operations return HTTP `200` with JSON. There is no asynchronous
-job identifier or polling endpoint; the device request stays open until the
-operation completes or fails.
+Successful display/time operations return HTTP `200` with JSON; the request
+stays open until that operation completes or fails. Optional audio has
+a separate asynchronous playback contract below.
 
 | Method and route | Request | Success JSON |
 | --- | --- | --- |
@@ -73,6 +73,10 @@ operation completes or fails.
 | `POST /api/display/clock` | Optional JSON with `style` and `color`; no body uses defaults | `{"status":"sent","mode":"clock"}` |
 | `POST /api/time/current` | No body | `{"status":"sent"}` |
 | `POST /api/time` | JSON with `value`, an ISO 8601 timestamp with UTC offset | `{"status":"sent"}` |
+| `PUT /api/audio/playback` | JSON with direct trusted HTTPS stream `url`, optional `volume` 0..1 | HTTP 202, playback state |
+| `GET /api/audio/playback` | No body | Playback state |
+| `PATCH /api/audio/playback` | JSON with required `volume` 0..1 | Playback state |
+| `DELETE /api/audio/playback` | No body | Playback state |
 
 Health checks confirm API reachability and authentication. They do not connect
 to or check the physical device. A healthy API can still fail a device send.
@@ -144,6 +148,41 @@ Clock selection does not change the device's startup display. To return to
 artwork, resend its image or GIF. Cache the source file or retain a downloadable
 gallery reference in the application; there is no API to restore an upload by ID.
 
+### Optional audio playback
+
+Audio is supported by the Windows target and the portable Linux/Pi target, and
+must be enabled by the server operator. Pairing and audio output selection are
+server/OS setup; the HTTP client does not manage them. Linux uses mpv with a
+host PulseAudio/PipeWire sink; see the README for deployment. An unset output
+reports `unavailable`.
+
+PUT accepts `{"url":"https://ice5.somafm.com/groovesalad-128-mp3","volume":0.25}`
+and returns HTTP 202 with `Location: /api/audio/playback`. The operator must allow
+the initial station hostname. URLs must be direct HTTPS streams on port 443,
+at most 2048 characters, without URL credentials or fragments. A website/player
+page or playlist file is not a tested audio source. The API key is sent only
+to the device API, never to the station. Volume defaults to 0.25 when omitted.
+
+GET, PATCH and DELETE return HTTP 200 with, for example:
+
+```json
+{"state":"playing","volume":0.25,"error":null}
+```
+
+Possible states are `stopped`, `starting`, `buffering`, `playing`, `failed`, and
+`unavailable`. Poll after 202; it means the start command was accepted, not that
+audio is already audible. The startup deadline is 20 seconds. Failure codes
+are `startup_timeout`, `stream_failed`, `audio_not_configured`, and
+`platform_unsupported`. An absent output or unavailable audio backend gives
+503 on valid start/volume requests. Invalid URL/volume gives 400.
+
+One stream is shared by clients of this server. A new URL replaces it; repeating
+the active URL changes volume without restarting. PATCH requires a volume from
+0 to 1; DELETE is idempotent. Playback survives completion of the start request
+and continues until stopped, replaced, finished/failed, or server shutdown.
+Audio commands have a 15-second deadline; the display/time deadline and retry
+policy below do not apply. Failed streams are not automatically reconnected.
+
 ## Gallery-to-device flow
 
 1. Browse/search the gallery using its own integration and credentials.
@@ -156,7 +195,7 @@ gallery reference in the application; there is no API to restore an upload by ID
    accepted `Content-Type`. Await the HTTP response.
 5. Show the outcome and keep the selection/source available for resend.
 
-There are no device API routes for gallery browsing, remote URL fetching,
+There are no device API routes for gallery browsing, remote artwork URL fetching,
 device discovery, multiple-device selection, playlists, stored slots, display
 readback, brightness, power, or deleting uploaded content. Each configured API
 server controls its configured device. Implement gallery browsing, favorites,
@@ -164,7 +203,7 @@ history, caching, and any scheduling in the new application.
 
 ## Deadlines, cancellation, and failures
 
-The server gives each device operation a **180-second deadline**, shared by
+The server gives each display/time operation a **180-second deadline**, shared by
 its internal attempts. Configure the HTTP client and any application proxy to
 allow longer than that (for example, **210 seconds**). The first send may take
 longer than later sends. Cancellation of the HTTP request also cancels the
@@ -183,7 +222,7 @@ requires them. Do not retry invalid requests unchanged.
 | `401` | Missing or invalid API key; check the device API credentials. |
 | `413` | Request body exceeds 2 MiB; reduce or replace the media. |
 | `415` | Missing/unsupported content type; use the documented MIME type. |
-| `503` | Device unavailable; show a device-service failure and allow a later resend. |
+| `503` | Bluetooth device or audio output/backend unavailable; show a service failure and allow a later retry after restoring the device/output. |
 | `504` | Device operation timed out or service is stopping; outcome may be uncertain. |
 | `499` | Request cancellation, if a response can still be delivered; commonly the client instead observes local cancellation. |
 | `500` | Unexpected server error; show a service failure. |
@@ -235,3 +274,8 @@ artwork by resending the cached file.
 With a real server, report authenticated health, HTTP send results, and
 user-confirmed visual playback separately. HTTP success confirms completion
 of the server operation; it does not prove rendering or persistence.
+
+For audio, verify start, status polling, volume changes and stop. Report HTTP 202
+acceptance, the backend's `playing` state and user-confirmed audible sound
+separately. Also check unavailable-output handling, replacement, shutdown and
+that a failed stream does not restart automatically.

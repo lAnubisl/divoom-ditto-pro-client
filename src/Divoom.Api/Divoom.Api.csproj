@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../Divoom.Audio/Divoom.Audio.csproj" />
     <ProjectReference Include="../Divoom.Client/Divoom.Client.csproj" />
     <ProjectReference Include="../Divoom.Transport.Linux/Divoom.Transport.Linux.csproj" />
   </ItemGroup>
