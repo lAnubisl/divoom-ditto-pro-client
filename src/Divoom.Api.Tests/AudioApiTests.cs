@@ -19,17 +19,28 @@ public sealed class AudioApiTests
     private HttpClient http = null!;
 
     [SetUp]
-    public async Task SetUp()
+    public Task SetUp() => StartHostAsync();
+
+    private async Task StartHostAsync(string allowedHttpUrls = "", string allowedHosts = "radio.example")
     {
         backend = new FakeAudioBackend();
         app = ApiHost.Build(Settings, builder =>
         {
+            builder.Configuration["DIVOOM_AUDIO_ALLOWED_HTTP_URLS"] = allowedHttpUrls;
+            builder.Configuration["DIVOOM_AUDIO_ALLOWED_HOSTS"] = allowedHosts;
             builder.WebHost.UseTestServer();
             builder.Logging.ClearProviders();
             builder.Services.AddSingleton<IDivoomAudioPlayer>(_ => new DivoomAudioPlayer(backend, recovery: new() { Enabled = false }, startupTimeout: TimeSpan.FromSeconds(20), reportRecovery: null));
         });
         await app.StartAsync();
         http = app.GetTestClient();
+    }
+
+    private async Task ConfigureHttpStreamsAsync(string urls, string allowedHosts = "radio.example")
+    {
+        http.Dispose();
+        await app.DisposeAsync();
+        await StartHostAsync(urls, allowedHosts);
     }
 
     [TearDown]
@@ -73,6 +84,7 @@ public sealed class AudioApiTests
 
     [TestCase("{}")]
     [TestCase("{\"url\":\"http://radio.example/live\"}")]
+    [TestCase("{\"url\":\"http://192.168.100.112:8000/listening\"}")]
     [TestCase("{\"url\":\"file:///private.wav\"}")]
     [TestCase("{\"url\":\"https://other.example/live\"}")]
     [TestCase("{\"url\":\"https://radio.example.evil/live\"}")]
@@ -88,6 +100,44 @@ public sealed class AudioApiTests
         http.DefaultRequestHeaders.Add("X-Api-Key", "audio-test-key");
         using var content = new StringContent(json, Encoding.UTF8, "application/json");
         using var response = await http.PutAsync(Route, content);
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(backend.Sessions, Is.Empty);
+    }
+
+    [TestCase("http://192.168.100.112:8000/listening")]
+    [TestCase("http://radio.example/live?station=1")]
+    [TestCase("http://[fd00::112]:8000/listening")]
+    public async Task ExplicitlyConfiguredHttpUrlReachesPlaybackBackend(string url)
+    {
+        await ConfigureHttpStreamsAsync(
+            " http://192.168.100.112:8000/listening, ,http://radio.example/live?station=1, http://[fd00::112]:8000/listening ", allowedHosts: "");
+        http.DefaultRequestHeaders.Add("X-Api-Key", "audio-test-key");
+
+        using var response = await http.PutAsJsonAsync(Route, new { url, volume = 0.4 });
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        Assert.That(backend.Source, Is.EqualTo(new Uri(url)));
+        Assert.That(backend.Sessions.Single().Volume, Is.EqualTo(0.4));
+    }
+
+    [TestCase("http://192.168.100.113:8000/listening")]
+    [TestCase("http://192.168.100.112:8001/listening")]
+    [TestCase("http://192.168.100.112:8000/other")]
+    [TestCase("http://192.168.100.112:8000/Listening")]
+    [TestCase("http://192.168.100.112:8000/listening?other=1")]
+    [TestCase("http://192.168.100.112:8000/listening#fragment")]
+    [TestCase("http://user:password@192.168.100.112:8000/listening")]
+    [TestCase("http://192.168.100.112.evil:8000/listening")]
+    [TestCase("https://192.168.100.112:8000/listening")]
+    [TestCase("file:///private.wav")]
+    public async Task HttpAllowlistRequiresTheConfiguredUrl(string url)
+    {
+        await ConfigureHttpStreamsAsync(
+            "http://192.168.100.112:8000/listening,file:///private.wav,http://user:password@192.168.100.112:8000/listening,http://192.168.100.112:8000/listening#fragment");
+        http.DefaultRequestHeaders.Add("X-Api-Key", "audio-test-key");
+
+        using var response = await http.PutAsJsonAsync(Route, new { url });
+
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
         Assert.That(backend.Sessions, Is.Empty);
     }

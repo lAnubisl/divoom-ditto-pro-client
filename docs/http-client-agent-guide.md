@@ -73,7 +73,7 @@ a separate asynchronous playback contract below.
 | `POST /api/display/clock` | Optional JSON with `style` and `color`; no body uses defaults | `{"status":"sent","mode":"clock"}` |
 | `POST /api/time/current` | No body | `{"status":"sent"}` |
 | `POST /api/time` | JSON with `value`, an ISO 8601 timestamp with UTC offset | `{"status":"sent"}` |
-| `PUT /api/audio/playback` | JSON with direct trusted HTTPS stream `url`, optional `volume` 0..1 | HTTP 202, playback state |
+| `PUT /api/audio/playback` | JSON with direct trusted HTTPS or explicitly allowed HTTP stream `url`, optional `volume` 0..1 | HTTP 202, playback state |
 | `GET /api/audio/playback` | No body | Playback state |
 | `PATCH /api/audio/playback` | JSON with required `volume` 0..1 | Playback state |
 | `DELETE /api/audio/playback` | No body | Playback state |
@@ -158,8 +158,13 @@ reports `unavailable`.
 
 PUT accepts `{"url":"https://ice5.somafm.com/groovesalad-128-mp3","volume":0.25}`
 and returns HTTP 202 with `Location: /api/audio/playback`. The operator must allow
-the initial station hostname. URLs must be direct HTTPS streams on port 443,
-at most 2048 characters, without URL credentials or fragments. A website/player
+the initial HTTPS station hostname in `DIVOOM_AUDIO_ALLOWED_HOSTS` (port 443).
+HTTP streams, including IP addresses and custom ports, require the full initial
+URL in `DIVOOM_AUDIO_ALLOWED_HTTP_URLS`, for example
+`http://192.168.100.112:8000/listening`. The port, path and query must match;
+paths and queries are case-sensitive. Both allowlists apply only to the initial
+URL; the media backend handles redirects. URLs must be at most 2048 characters,
+without URL credentials or fragments. A website/player
 page or playlist file is not a tested audio source. The API key is sent only
 to the device API, never to the station. Volume defaults to 0.25 when omitted.
 

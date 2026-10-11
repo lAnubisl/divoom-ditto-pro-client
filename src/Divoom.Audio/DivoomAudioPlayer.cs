@@ -34,8 +34,8 @@ public sealed class DivoomAudioPlayer : IDivoomAudioPlayer
     public async Task StartAsync(Uri source, double volume, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
-        if (!source.IsAbsoluteUri || source.Scheme != Uri.UriSchemeHttps)
-            throw new ArgumentException("An absolute HTTPS stream URL is required.", nameof(source));
+        if (!source.IsAbsoluteUri || source.Scheme != Uri.UriSchemeHttps && source.Scheme != Uri.UriSchemeHttp)
+            throw new ArgumentException("An absolute HTTP or HTTPS stream URL is required.", nameof(source));
         ValidateVolume(volume);
         await commands.WaitAsync(cancellationToken);
         AudioPlaybackIntent? previous = null;

@@ -301,7 +301,8 @@ and cancel when the request aborts or the host stops.
 | `DIVOOM_STATE_DIRECTORY` | `/data` |
 | `DBUS_SYSTEM_BUS_ADDRESS` | `unix:path=/run/dbus/system_bus_socket` |
 | `DIVOOM_AUDIO_DEVICE` | Windows render endpoint ID/name or Linux PulseAudio sink name; unset disables audio |
-| `DIVOOM_AUDIO_ALLOWED_HOSTS` | Comma-separated trusted stream hostnames; required to accept audio URLs; no wildcard or implicit defaults |
+| `DIVOOM_AUDIO_ALLOWED_HOSTS` | Comma-separated trusted HTTPS stream hostnames; no wildcard or implicit defaults |
+| `DIVOOM_AUDIO_ALLOWED_HTTP_URLS` | Comma-separated full trusted HTTP stream URLs, including port, path and query; unset rejects all HTTP streams |
 | `DIVOOM_AUDIO_AUTO_RECONNECT` | `true` (default) retries interrupted streams; `false` restores terminal failure behavior |
 | `DIVOOM_AUDIO_BLUETOOTH_ADDRESS` | Linux only: optional MAC of the already paired audio device for A2DP recovery; may differ from `DIVOOM_ADDRESS`; uses `DIVOOM_ADAPTER` and the host D-Bus |
 | `PULSE_SERVER` | Linux only: PulseAudio/PipeWire socket address when outside the host user's normal session |
@@ -353,11 +354,14 @@ Invoke-RestMethod -Method Patch -Uri $audioApi -Headers $audioHeaders `
 Invoke-RestMethod -Method Delete -Uri $audioApi -Headers $audioHeaders
 ```
 
-Supply a **direct HTTPS audio stream** URL, not a station's HTML page or playlist
+Supply a **direct audio stream** URL, not a station's HTML page or playlist
 file. MP3 radio streaming has been tested with Windows MediaPlayer and Linux mpv on Ditoo;
-other formats/stations need verification. Initial URLs must use port 443, match
-an exact configured hostname, contain no URL credentials or fragment, and be at
-most 2048 characters. Invalid URLs/volume return HTTP 400 before opening audio.
+other formats/stations need verification. Initial HTTPS URLs must use port 443 and match
+an exact hostname in `DIVOOM_AUDIO_ALLOWED_HOSTS`. HTTP URLs must match a full URL
+in `DIVOOM_AUDIO_ALLOWED_HTTP_URLS`; IP addresses and custom ports are supported.
+Paths and queries are case-sensitive and must match; configuring an HTTP URL does
+not permit other URLs on that host. All URLs must contain no URL credentials or
+fragment and be at most 2048 characters. Invalid URLs/volume return HTTP 400 before opening audio.
 Only configure trusted station providers: the platform media engine handles
 redirects and referenced media internally, and the host allowlist checks the
 initial URL only. It is not a network sandbox for an untrusted media provider.
@@ -466,7 +470,8 @@ add these entries to its existing service's `environment` and `volumes`:
     environment:
       # Keep the existing address, API key and other settings.
       DIVOOM_AUDIO_DEVICE: ${DIVOOM_AUDIO_DEVICE:?Set the exact Bluetooth sink name}
-      DIVOOM_AUDIO_ALLOWED_HOSTS: ${DIVOOM_AUDIO_ALLOWED_HOSTS:?Set trusted station hosts}
+      DIVOOM_AUDIO_ALLOWED_HOSTS: ${DIVOOM_AUDIO_ALLOWED_HOSTS:-}
+      DIVOOM_AUDIO_ALLOWED_HTTP_URLS: ${DIVOOM_AUDIO_ALLOWED_HTTP_URLS:-}
       DIVOOM_AUDIO_AUTO_RECONNECT: ${DIVOOM_AUDIO_AUTO_RECONNECT:-true}
       DIVOOM_AUDIO_BLUETOOTH_ADDRESS: ${DIVOOM_AUDIO_BLUETOOTH_ADDRESS:-}
       PULSE_SERVER: unix:/run/divoom-pulse/native
@@ -475,7 +480,8 @@ add these entries to its existing service's `environment` and `volumes`:
       - ${DIVOOM_PULSE_DIRECTORY:-/run/user/1000/pulse}:/run/divoom-pulse:ro
 ```
 
-Set `DIVOOM_AUDIO_DEVICE`, `DIVOOM_AUDIO_ALLOWED_HOSTS`, and optionally
+Set `DIVOOM_AUDIO_DEVICE`, the stream allowlist (`DIVOOM_AUDIO_ALLOWED_HOSTS`
+and/or `DIVOOM_AUDIO_ALLOWED_HTTP_URLS`), and optionally
 `DIVOOM_AUDIO_BLUETOOTH_ADDRESS` in the Pi's `.env`
 alongside `compose.yaml`. Set the Compose-only `DIVOOM_PULSE_DIRECTORY` there
 to the host audio user's socket directory if its UID is not 1000. Find it with

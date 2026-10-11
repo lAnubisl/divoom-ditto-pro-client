@@ -15,6 +15,7 @@ services:
       DIVOOM_ADDRESS: ${DIVOOM_ADDRESS:?Set DIVOOM_ADDRESS to the Ditoo Light MAC address}
       DIVOOM_API_KEY: ${DIVOOM_API_KEY:?Set DIVOOM_API_KEY to your secret API key}
       DIVOOM_ADAPTER: ${DIVOOM_ADAPTER:-hci0}
+      DIVOOM_AUDIO_ALLOWED_HTTP_URLS: ${DIVOOM_AUDIO_ALLOWED_HTTP_URLS:-}
       DBUS_SYSTEM_BUS_ADDRESS: unix:path=/run/dbus/system_bus_socket
       DIVOOM_STATE_DIRECTORY: /data
       TZ: ${TZ:-Europe/Amsterdam}
