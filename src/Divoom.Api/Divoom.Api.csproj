@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.3.0" />
     <ProjectReference Include="../Divoom.Audio/Divoom.Audio.csproj" />
     <ProjectReference Include="../Divoom.Client/Divoom.Client.csproj" />
     <ProjectReference Include="../Divoom.Transport.Linux/Divoom.Transport.Linux.csproj" />

@@ -197,9 +197,29 @@ For a separate gallery or other network client application, use the standalone
 device integration boundary, request/response contract, and client error handling
 without requiring Bluetooth or protocol code in the consuming application.
 
-All routes, including health, require an `X-Api-Key` header. The API reads the
+All API routes, including health, require an `X-Api-Key` header. The API reads the
 key from `DIVOOM_API_KEY`. Startup fails if the key or device address is missing.
 Run the following examples from the repository root.
+
+### Swagger UI
+
+Open `http://raspberrypi.local:8080/swagger` (or your API host and port) in a
+browser. Swagger UI is served by the API in all environments, including Docker;
+no separate service or port is needed. On Windows with the command above, open
+`http://127.0.0.1:8080/swagger`.
+
+Click **Authorize**, enter your `DIVOOM_API_KEY`, and confirm. Choose an operation,
+click **Try it out**, edit the JSON body or select an image/GIF file, then click
+**Execute**. Requests send the key in the `X-Api-Key` header. For uploads, select
+the matching content type; the file is sent as raw bytes. Start with
+`GET /api/health` to check access without connecting to Bluetooth.
+
+The UI, its assets and `/swagger/v1/swagger.json` are publicly readable so the
+browser can load documentation before authorization. API operations still require
+the key. The documentation contains no configured credentials, and the UI does
+not persist authorization across page reloads.
+
+### Requests
 
 | Method | Route | Body |
 | --- | --- | --- |

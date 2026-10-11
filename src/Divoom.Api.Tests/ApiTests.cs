@@ -16,7 +16,7 @@ using NUnit.Framework;
 public sealed class ApiTests
 {
     private const string key = "integration-test-key";
-    private static readonly string[] settings = ["--DIVOOM_API_KEY", key, "--DIVOOM_ADDRESS", "B1:21:81:4B:E6:42"];
+    private static readonly string[] settings = ["--environment", "Production", "--DIVOOM_API_KEY", key, "--DIVOOM_ADDRESS", "B1:21:81:4B:E6:42"];
     private FakeClient device = null!;
     private WebApplication app = null!;
     private HttpClient http = null!;
@@ -43,6 +43,64 @@ public sealed class ApiTests
         http.Dispose();
         await app.DisposeAsync();
         Assert.That(device.Disposals, Is.EqualTo(creations), "Host shutdown disposes the resolved device client exactly once.");
+    }
+
+    [Test]
+    public async Task SwaggerLoadsWithoutKeyAndDescribesAuthenticatedRequests()
+    {
+        using var page = await http.GetAsync("/swagger/index.html");
+        Assert.That(page.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var html = await page.Content.ReadAsStringAsync();
+        Assert.That(html, Does.Contain("swagger-ui").And.Contain("index.js"));
+        using var configuration = await http.GetAsync("/swagger/index.js");
+        Assert.That(configuration.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That(await configuration.Content.ReadAsStringAsync(), Does.Contain("v1/swagger.json"));
+        foreach (var asset in new[] { "index.css", "swagger-ui.css", "swagger-ui-bundle.js", "swagger-ui-standalone-preset.js" })
+        {
+            using var response = await http.GetAsync("/swagger/" + asset);
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), asset);
+        }
+
+        using var document = await http.GetAsync("/swagger/v1/swagger.json");
+        Assert.That(document.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        var json = await document.Content.ReadAsStringAsync();
+        Assert.That(json, Does.Not.Contain(key).And.Not.Contain("B1:21:81:4B:E6:42"));
+        using var parsed = System.Text.Json.JsonDocument.Parse(json);
+        var root = parsed.RootElement;
+        var scheme = root.GetProperty("components").GetProperty("securitySchemes").GetProperty("ApiKey");
+        Assert.That(scheme.GetProperty("type").GetString(), Is.EqualTo("apiKey"));
+        Assert.That(scheme.GetProperty("in").GetString(), Is.EqualTo("header"));
+        Assert.That(scheme.GetProperty("name").GetString(), Is.EqualTo("X-Api-Key"));
+        Assert.That(root.GetProperty("security")[0].GetProperty("ApiKey").GetArrayLength(), Is.Zero);
+        var paths = root.GetProperty("paths");
+        Assert.That(paths.EnumerateObject().Select(path => path.Name), Is.EquivalentTo(new[]
+        {
+            "/api/health", "/api/images", "/api/animations", "/api/time",
+            "/api/time/current", "/api/display/clock", "/api/audio/playback"
+        }));
+        foreach (var method in new[] { "get", "put", "patch", "delete" })
+            Assert.That(paths.GetProperty("/api/audio/playback").TryGetProperty(method, out _), Is.True);
+        var clockBody = paths.GetProperty("/api/display/clock").GetProperty("post").GetProperty("requestBody");
+        Assert.That(clockBody.TryGetProperty("required", out var required) && required.GetBoolean(), Is.False);
+        Assert.That(paths.GetProperty("/api/time").GetProperty("post").GetProperty("requestBody")
+            .GetProperty("content").TryGetProperty("application/json", out _), Is.True);
+        foreach (var route in new[] { "/api/images", "/api/animations" })
+        {
+            var body = paths.GetProperty(route).GetProperty("post").GetProperty("requestBody");
+            Assert.That(body.GetProperty("required").GetBoolean(), Is.True);
+            var content = body.GetProperty("content");
+            Assert.That(content.TryGetProperty("multipart/form-data", out _), Is.False);
+            foreach (var type in content.EnumerateObject())
+            {
+                var schema = type.Value.GetProperty("schema");
+                Assert.That(schema.GetProperty("type").GetString(), Is.EqualTo("string"));
+                Assert.That(schema.GetProperty("format").GetString(), Is.EqualTo("binary"));
+            }
+        }
+        Assert.That(creations, Is.Zero, "Documentation must not resolve a Bluetooth client.");
+        await Status(await http.GetAsync("/api/health"), HttpStatusCode.Unauthorized, forbidden: null);
+        http.DefaultRequestHeaders.Add("X-Api-Key", key);
+        await Status(await http.GetAsync("/api/health"), HttpStatusCode.OK, forbidden: null);
     }
 
     [Test]
@@ -186,6 +244,8 @@ public sealed class ApiTests
             await network.StartAsync();
             var address = network.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
             using var http = new HttpClient { BaseAddress = new Uri(address) };
+            await Status(await http.GetAsync("/swagger/index.html"), HttpStatusCode.OK, forbidden: key);
+            await Status(await http.GetAsync("/swagger/v1/swagger.json"), HttpStatusCode.OK, forbidden: key);
             await Status(await http.GetAsync("/api/health"), HttpStatusCode.Unauthorized, forbidden: null);
             http.DefaultRequestHeaders.Add("X-Api-Key", key);
             await Status(await http.GetAsync("/api/health"), HttpStatusCode.OK, forbidden: null);

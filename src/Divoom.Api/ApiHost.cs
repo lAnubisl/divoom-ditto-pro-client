@@ -4,6 +4,7 @@ using Divoom;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Divoom.Api.Endpoints;
+using Microsoft.OpenApi;
 
 namespace Divoom.Api;
 
@@ -23,6 +24,23 @@ public static class ApiHost
         builder.Services.AddAuthorization(options => options.FallbackPolicy = new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser().Build());
         builder.Services.AddProblemDetails();
+        builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddSwaggerGen(options =>
+        {
+            options.SwaggerDoc("v1", new OpenApiInfo { Title = "Divoom API", Version = "v1" });
+            options.AddSecurityDefinition(ApiKeyAuthenticationHandler.SchemeName, new OpenApiSecurityScheme
+            {
+                Type = SecuritySchemeType.ApiKey,
+                In = ParameterLocation.Header,
+                Name = "X-Api-Key",
+                Description = "Enter the configured DIVOOM_API_KEY to send API requests."
+            });
+            options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+            {
+                [new OpenApiSecuritySchemeReference(ApiKeyAuthenticationHandler.SchemeName, document)] = []
+            });
+            options.OperationFilter<MediaUploadOperationFilter>();
+        });
         builder.Services.AddSingleton<AudioStreamPolicy>();
         builder.Services.AddSingleton<IDivoomAudioPlayer>(services => AudioPlayerFactory.Create(builder.Configuration,
             services.GetRequiredService<ILogger<DivoomAudioPlayer>>()));
@@ -48,6 +66,14 @@ public static class ApiHost
         configure?.Invoke(builder);
         var app = builder.Build();
         app.UseExceptionHandler(errors => errors.Run(ApiExceptionResponse.WriteAsync));
+        // Documentation must load before a browser user can enter the API key.
+        app.UseSwagger();
+        app.UseSwaggerUI(options =>
+        {
+            options.SwaggerEndpoint("v1/swagger.json", "Divoom API v1");
+            options.DocumentTitle = "Divoom API";
+            options.EnableValidator(null);
+        });
         app.UseAuthentication();
         app.UseAuthorization();
         var api = app.MapGroup("/api").RequireAuthorization();
