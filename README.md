@@ -282,6 +282,8 @@ and cancel when the request aborts or the host stops.
 | `DBUS_SYSTEM_BUS_ADDRESS` | `unix:path=/run/dbus/system_bus_socket` |
 | `DIVOOM_AUDIO_DEVICE` | Windows render endpoint ID/name or Linux PulseAudio sink name; unset disables audio |
 | `DIVOOM_AUDIO_ALLOWED_HOSTS` | Comma-separated trusted stream hostnames; required to accept audio URLs; no wildcard or implicit defaults |
+| `DIVOOM_AUDIO_AUTO_RECONNECT` | `true` (default) retries interrupted streams; `false` restores terminal failure behavior |
+| `DIVOOM_AUDIO_BLUETOOTH_ADDRESS` | Linux only: optional MAC of the already paired audio device for A2DP recovery; may differ from `DIVOOM_ADDRESS`; uses `DIVOOM_ADAPTER` and the host D-Bus |
 | `PULSE_SERVER` | Linux only: PulseAudio/PipeWire socket address when outside the host user's normal session |
 
 Each HTTP display/time operation has a 180-second deadline shared by all retry
@@ -313,8 +315,9 @@ dotnet run --project src/Divoom.Api -f net10.0-windows10.0.19041.0 -- --urls htt
 ```
 
 Use the exact name shown by Windows on your system, or its audio endpoint ID.
-An absent, disabled, or ambiguous output produces HTTP 503; the player never
-silently selects the default speaker. Music uses the A2DP output. Opening the
+An absent, disabled, or ambiguous output enters recovery by default (503 when
+recovery is disabled); the player never silently selects the default speaker.
+Music uses the A2DP output. Opening the
 Ditoo microphone can switch to the lower-quality hands-free audio profile.
 This version does not expose microphone capture or simultaneous music/capture.
 
@@ -343,19 +346,32 @@ The device API key is never forwarded to the station.
 One stream can play at a time. A different URL replaces it; the same URL updates
 volume without restarting an active stream. Omitted start volume defaults to
 0.25. Volume is player gain (0..1), not a change to system-wide volume. Playback
-continues after the start HTTP request completes and ends on DELETE, replacement,
-stream completion/failure, or application shutdown. The player does not reconnect
-automatically after a failed stream. After receiving 202, poll GET for state:
+continues after the start HTTP request completes. By default, interrupted or ended
+streams and startup timeouts trigger recovery of the same URL and latest volume.
+Recovery continues until DELETE, replacement or application shutdown. Retries wait
+2, 5, 10, 30, then 60 seconds between attempts; each preparation and playback startup
+has a 20-second deadline. Successful playback resets the backoff. The URL is retained
+only in memory, so restarting the API does not resume a station. After receiving
+202, poll GET for state:
 
 ```json
-{"state":"playing","volume":0.25,"error":null}
+{"state":"playing","volume":0.25,"error":null,"retryAttempts":0,"lastError":null}
 ```
 
-States are `stopped`, `starting`, `buffering`, `playing`, `failed`, and
-`unavailable`. Errors are stable codes: `startup_timeout`, `stream_failed`,
+States are `stopped`, `starting`, `buffering`, `playing`, `reconnecting`, `failed`, and
+`unavailable`. `retryAttempts` counts recovery attempts for the selected station;
+`lastError` retains the most recent stable recovery error even after playback resumes.
+Errors are stable codes: `startup_timeout`, `stream_failed`, `output_unavailable`,
 `audio_not_configured`, or `platform_unsupported`; platform exceptions and source
 URLs are omitted from status. `playing` is reported by the media backend; it does not
 prove that the physical speaker is audible.
+
+An initially absent output accepts the station with HTTP 202 and `reconnecting`.
+An unsuccessful replacement preserves an existing active station and returns 503.
+Set `DIVOOM_AUDIO_AUTO_RECONNECT=false` to disable recovery: missing outputs then
+return 503 and stream failures remain terminal. `AUDIO_RECOVERY` logs record state,
+attempt count and stable error codes, without the URL or credentials. PATCH updates
+the desired volume during recovery; DELETE cancels pending connection and retry work.
 
 Audio is optional. Unset `DIVOOM_AUDIO_DEVICE` reports `unavailable` and valid
 start/volume commands return HTTP 503, while display commands remain available.
@@ -407,7 +423,17 @@ Run `pactl list short sinks` and use the exact `bluez_output...` name for
 `DIVOOM_AUDIO_DEVICE`. Run `pactl list cards` to confirm an A2DP profile; a
 hands-free profile gives lower-quality audio. Sink names can change after a
 profile change: update configuration and restart the API. `auto`, `default`,
-and symbolic default sinks are rejected. An absent sink returns HTTP 503.
+and symbolic default sinks are rejected. An absent sink enters recovery by default.
+
+For automatic Bluetooth reconnection, set `DIVOOM_AUDIO_BLUETOOTH_ADDRESS` to the
+audio device MAC discovered above. Recovery resolves the configured adapter on each
+attempt and calls BlueZ `ConnectProfile` for Audio Sink only, then waits for the
+exact configured Pulse sink. The device must already be paired on that adapter;
+the API does not pair, trust, scan, disconnect the BLE session, reset USB or restart
+BlueZ/PipeWire/WirePlumber. Without this setting it only waits for the audio output
+to return and reopens the stream. A stuck host audio service or a changed sink name
+may still require operator intervention. Windows recovery reopens the configured
+render endpoint; Windows owns Bluetooth reconnection.
 
 For a non-container API, also install `mpv`, set the two audio variables, and
 run the portable `net10.0` target. It must reach the host Pulse server; set
@@ -421,13 +447,16 @@ add these entries to its existing service's `environment` and `volumes`:
       # Keep the existing address, API key and other settings.
       DIVOOM_AUDIO_DEVICE: ${DIVOOM_AUDIO_DEVICE:?Set the exact Bluetooth sink name}
       DIVOOM_AUDIO_ALLOWED_HOSTS: ${DIVOOM_AUDIO_ALLOWED_HOSTS:?Set trusted station hosts}
+      DIVOOM_AUDIO_AUTO_RECONNECT: ${DIVOOM_AUDIO_AUTO_RECONNECT:-true}
+      DIVOOM_AUDIO_BLUETOOTH_ADDRESS: ${DIVOOM_AUDIO_BLUETOOTH_ADDRESS:-}
       PULSE_SERVER: unix:/run/divoom-pulse/native
     volumes:
       # Keep the existing D-Bus mount and state volume.
       - ${DIVOOM_PULSE_DIRECTORY:-/run/user/1000/pulse}:/run/divoom-pulse:ro
 ```
 
-Set `DIVOOM_AUDIO_DEVICE` and `DIVOOM_AUDIO_ALLOWED_HOSTS` in the Pi's `.env`
+Set `DIVOOM_AUDIO_DEVICE`, `DIVOOM_AUDIO_ALLOWED_HOSTS`, and optionally
+`DIVOOM_AUDIO_BLUETOOTH_ADDRESS` in the Pi's `.env`
 alongside `compose.yaml`. Set the Compose-only `DIVOOM_PULSE_DIRECTORY` there
 to the host audio user's socket directory if its UID is not 1000. Find it with
 `echo "/run/user/$(id -u)/pulse"` as that user, and check that
@@ -452,37 +481,6 @@ Portable .NET 10 client for the Divoom Ditoo Pro BLE display endpoint.
 The library includes portable image/GIF decoding through StbImageSharp and
 accepts file paths or streams through `DittoMedia`.
 
-`IDittoProClient` is the public contract for all device operations and inherits
-`IAsyncDisposable`. `DittoProClient` implements it; applications can depend on
-the interface for dependency injection or substitution.
-
-```csharp
-using Divoom;
-
-// The client owns and disposes the injected IDittoProTransport.
-await using IDittoProClient client = new DittoProClient(transport, new DittoProClientOptions
-{
-    ControllerId = persistedControllerId,
-    TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Amsterdam")
-});
-
-await client.SendImageAsync(new DittoImage(rgb888)); // 768 bytes, row-major
-await client.SendAnimationAsync(new[]
-{
-    new DittoAnimationFrame(firstImage, TimeSpan.FromMilliseconds(200)),
-    new DittoAnimationFrame(secondImage, TimeSpan.FromMilliseconds(500))
-});
-await client.SendCurrentDateTimeAsync();
-await client.ShowClockAsync(); // Style 0, green on a dark background.
-await client.ShowClockAsync(0, 0x00FF00); // Explicit style and RGB color.
-```
-
-`Divoom.Client` includes portable file decoding through `DittoMedia`:
-
-```csharp
-await client.SendImageAsync(DittoMedia.LoadImage("picture.png"));
-await client.SendAnimationAsync(DittoMedia.LoadGif("animation.gif"));
-```
 
 ### Connection lifecycle
 
@@ -560,32 +558,6 @@ The client owns framing, checksums, initialization, pacing, splitting at
   forwards characteristic `Value` changes and writes with ATT response flow
   control. See [Linux host setup](#linux-host-setup).
 
-## Linux transport
-
-`BlueZBleTransport` implements `IDittoProTransport` using the host's BlueZ
-system D-Bus API. It handles Bluetooth discovery, GATT connection, notification
-subscription, writes and cleanup. Device commands, packet splitting and session
-initialization remain in `DittoProClient`.
-
-```csharp
-using Divoom;
-
-await using IDittoProClient client = new DittoProClient(
-    new BlueZBleTransport("AA:BB:CC:DD:EE:FF", new BlueZTransportOptions
-    {
-        Adapter = "hci0",
-        BusAddress = "unix:path=/run/dbus/system_bus_socket"
-    }),
-    new DittoProClientOptions
-    {
-        ControllerId = persistedControllerId,
-        TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Amsterdam")
-    });
-
-await client.SendAnimationAsync(DittoMedia.LoadGif("assets/mail-14.gif"));
-await client.SendCurrentDateTimeAsync(); // Reuses the same initialized connection.
-// Disposing the client disposes the transport and closes Bluetooth once.
-```
 
 ### Behavior and validation
 

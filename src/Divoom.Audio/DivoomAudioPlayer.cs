@@ -1,65 +1,72 @@
 namespace Divoom;
 
-/// <summary>Serializes commands and owns sessions beyond the lifetime of individual HTTP requests.</summary>
-public sealed class DivoomAudioPlayer(IAudioPlaybackBackend backend, TimeSpan? startupTimeout = null) : IDivoomAudioPlayer
+/// <summary>Owns playback and recovery beyond individual HTTP requests.</summary>
+public sealed class DivoomAudioPlayer : IDivoomAudioPlayer
 {
+    private readonly IAudioPlaybackBackend backend;
     private readonly SemaphoreSlim commands = new(1, 1);
     private readonly object stateLock = new();
-    private readonly TimeSpan timeout = startupTimeout ?? TimeSpan.FromSeconds(20);
-    private AudioPlaybackStatus status = new("stopped", 0.25);
+    private readonly TimeSpan timeout;
+    private readonly bool recover;
+    private readonly TimeSpan[] delays;
+    private readonly Action<AudioPlaybackStatus>? reportRecovery;
+    private AudioPlaybackStatus status = new("stopped", 0.25, Error: null, RetryAttempts: 0, LastError: null);
     private AudioPlaybackRun? current;
+    private AudioPlaybackIntent? intent;
     private bool disposed;
+
+    public DivoomAudioPlayer(IAudioPlaybackBackend backend, TimeSpan startupTimeout, AudioRecoveryOptions recovery,
+        Action<AudioPlaybackStatus>? reportRecovery)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+        ArgumentNullException.ThrowIfNull(recovery);
+        this.backend = backend;
+        this.reportRecovery = reportRecovery;
+        timeout = startupTimeout;
+        recover = recovery.Enabled;
+        delays = recovery.RetryDelays.ToArray();
+        if (timeout <= TimeSpan.Zero || delays.Length == 0 || delays.Any(d => d <= TimeSpan.Zero || d.TotalMilliseconds > int.MaxValue))
+            throw new ArgumentOutOfRangeException(nameof(recovery), "Timeout and retry delays must be positive, bounded durations.");
+    }
 
     public AudioPlaybackStatus Status { get { lock (stateLock) return status; } }
 
-    public async Task StartAsync(Uri source, double volume = 0.25, CancellationToken cancellationToken = default)
+    public async Task StartAsync(Uri source, double volume, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
         if (!source.IsAbsoluteUri || source.Scheme != Uri.UriSchemeHttps)
             throw new ArgumentException("An absolute HTTPS stream URL is required.", nameof(source));
         ValidateVolume(volume);
         await commands.WaitAsync(cancellationToken);
-        AudioPlaybackRun? previous = null;
+        AudioPlaybackIntent? previous = null;
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            AudioPlaybackRun? existing;
-            lock (stateLock)
+            if (intent?.Source == source)
             {
-                existing = current?.Source == source && status.State is "starting" or "buffering" or "playing" ? current : null;
-            }
-            if (existing is not null)
-            {
-                existing.Session.Volume = volume;
+                if (current is not null && !current.Ended.Task.IsCompleted) current.Session.Volume = volume;
                 lock (stateLock) status = status with { Volume = volume };
                 return;
             }
-            // Keep the old station if preparation or cancellation fails.
-            var session = await backend.OpenAsync(source, volume, cancellationToken);
-            if (cancellationToken.IsCancellationRequested) { session.Dispose(); cancellationToken.ThrowIfCancellationRequested(); }
-            var run = new AudioPlaybackRun(session, source);
-            run.Handler = state => OnStateChanged(run, state);
-            session.StateChanged += run.Handler;
+            IAudioPlaybackSession? session = null;
+            // A failed replacement preserves an existing healthy stream.
+            try { session = await backend.OpenAsync(source, volume, cancellationToken); }
+            catch (AudioUnavailableException) when (recover && current is null && !cancellationToken.IsCancellationRequested) { }
+            if (cancellationToken.IsCancellationRequested) { session?.Dispose(); cancellationToken.ThrowIfCancellationRequested(); }
+            previous = intent;
+            previous?.Cancellation.Cancel();
+            var oldRun = current;
+            var next = new AudioPlaybackIntent(source);
             lock (stateLock)
             {
-                previous = current;
-                current = run;
-                status = new("starting", volume);
+                intent = next;
+                current = null;
+                status = session is null ? new("reconnecting", volume, "output_unavailable", LastError: "output_unavailable", RetryAttempts: 0) : new("starting", volume, Error: null, RetryAttempts: 0, LastError: null);
             }
-            try
-            {
-                Release(previous);
-                session.Play();
-                OnStateChanged(run, session.State);
-                run.Monitor = MonitorAsync(run);
-            }
-            catch (Exception error)
-            {
-                lock (stateLock) { current = null; status = new("failed", volume, "stream_failed"); }
-                Release(run);
-                run.Cancellation.Dispose();
-                throw new AudioUnavailableException("The audio stream could not be started.", error);
-            }
+            Release(oldRun);
+            var run = session is null ? null : Install(session, next);
+            next.Worker = MonitorAsync(next, run);
+            if (session is null) ReportRecovery();
         }
         finally
         {
@@ -68,83 +75,144 @@ public sealed class DivoomAudioPlayer(IAudioPlaybackBackend backend, TimeSpan? s
         }
     }
 
-    public async Task SetVolumeAsync(double volume, CancellationToken cancellationToken = default)
+    public async Task SetVolumeAsync(double volume, CancellationToken cancellationToken)
     {
         ValidateVolume(volume);
         await commands.WaitAsync(cancellationToken);
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            AudioPlaybackRun? run;
-            lock (stateLock) run = current;
-            if (run is not null) run.Session.Volume = volume;
+            if (current is not null && !current.Ended.Task.IsCompleted) current.Session.Volume = volume;
             lock (stateLock) status = status with { Volume = volume };
         }
         finally { commands.Release(); }
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken = default)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         await commands.WaitAsync(cancellationToken);
-        AudioPlaybackRun? run;
-        try
-        {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            lock (stateLock) { run = current; current = null; status = new("stopped", status.Volume); }
-            Release(run);
-        }
+        AudioPlaybackIntent? previous;
+        try { ObjectDisposedException.ThrowIf(disposed, this); previous = Clear(); }
         finally { commands.Release(); }
-        if (run is not null) await FinishAsync(run);
+        if (previous is not null) await FinishAsync(previous);
     }
 
     public async ValueTask DisposeAsync()
     {
         await commands.WaitAsync();
-        AudioPlaybackRun? run;
-        try
-        {
-            if (disposed) return;
-            disposed = true;
-            lock (stateLock) { run = current; current = null; status = new("stopped", status.Volume); }
-            Release(run);
-        }
+        AudioPlaybackIntent? previous;
+        try { if (disposed) return; disposed = true; previous = Clear(); }
         finally { commands.Release(); }
-        if (run is not null) await FinishAsync(run);
+        if (previous is not null) await FinishAsync(previous);
+    }
+
+    // Called only while commands is held. Session callbacks never acquire commands.
+    private AudioPlaybackIntent? Clear()
+    {
+        var previous = intent;
+        previous?.Cancellation.Cancel();
+        var run = current;
+        lock (stateLock) { intent = null; current = null; status = new("stopped", status.Volume, Error: null, RetryAttempts: 0, LastError: null); }
+        Release(run);
+        return previous;
+    }
+
+    private AudioPlaybackRun Install(IAudioPlaybackSession session, AudioPlaybackIntent owner)
+    {
+        var run = new AudioPlaybackRun(session, owner.Source);
+        run.Handler = state => OnStateChanged(run, state);
+        session.StateChanged += run.Handler;
+        lock (stateLock) { current = run; status = status with { State = "starting", Error = null }; }
+        try { session.Play(); OnStateChanged(run, session.State); }
+        catch { OnStateChanged(run, "failed"); }
+        return run;
     }
 
     private void OnStateChanged(AudioPlaybackRun run, string state)
     {
         lock (stateLock)
         {
-            if (current != run || status.State is "failed" or "stopped") return;
-            status = new(state, status.Volume, state == "failed" ? "stream_failed" : null);
+            if (current != run || run.Ended.Task.IsCompleted) return;
+            status = status with { State = state, Error = state == "failed" ? "stream_failed" : null };
             if (state == "playing") run.Ready.TrySetResult();
             if (state is "failed" or "stopped") { run.Ready.TrySetResult(); run.Ended.TrySetResult(); }
         }
     }
 
-    private async Task MonitorAsync(AudioPlaybackRun run)
+    private async Task MonitorAsync(AudioPlaybackIntent owner, AudioPlaybackRun? run)
     {
-        var token = run.Cancellation.Token;
-        string? failure = null;
+        var token = owner.Cancellation.Token;
+        var consecutive = 0;
         try
         {
-            try { await run.Ready.Task.WaitAsync(timeout, token); }
-            catch (TimeoutException) { failure = "startup_timeout"; }
-            if (failure is null) await run.Ended.Task.WaitAsync(token);
-            await commands.WaitAsync(token);
-            try
+            while (true)
             {
+                var failure = "output_unavailable";
+                if (run is not null)
+                {
+                    try
+                    {
+                        await run.Ready.Task.WaitAsync(timeout, token);
+                        if (run.Session.State == "playing") { consecutive = 0; if (Status.RetryAttempts > 0) ReportRecovery(); }
+                        await run.Ended.Task.WaitAsync(token);
+                        failure = "stream_failed";
+                    }
+                    catch (TimeoutException) { failure = "startup_timeout"; }
+                    await commands.WaitAsync(token);
+                    try
+                    {
+                        if (intent != owner) return;
+                        lock (stateLock)
+                        {
+                            current = null;
+                            status = status with { State = recover ? "reconnecting" : (failure == "startup_timeout" ? "failed" : status.State),
+                                Error = recover ? failure : (failure == "startup_timeout" ? failure : status.Error), LastError = recover ? failure : null };
+                        }
+                        Release(run);
+                        run = null;
+                        if (recover) ReportRecovery();
+                        if (!recover) { lock (stateLock) intent = null; owner.Cancellation.Dispose(); return; }
+                    }
+                    finally { commands.Release(); }
+                }
+
+                await Task.Delay(delays[Math.Min(consecutive, delays.Length - 1)], token);
+                consecutive = Math.Min(consecutive + 1, delays.Length - 1);
+                double volume;
                 lock (stateLock)
                 {
-                    if (current != run) return;
-                    current = null;
-                    if (failure is not null) status = new("failed", status.Volume, failure);
+                    if (intent != owner) return;
+                    volume = status.Volume;
+                    status = status with { RetryAttempts = status.RetryAttempts == int.MaxValue ? int.MaxValue : status.RetryAttempts + 1 };
                 }
-                Release(run);
-                run.Cancellation.Dispose();
+                ReportRecovery();
+                IAudioPlaybackSession? prepared = null;
+                try
+                {
+                    using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    attempt.CancelAfter(timeout);
+                    await backend.PrepareRecoveryAsync(attempt.Token);
+                    prepared = await backend.OpenAsync(owner.Source, volume, attempt.Token);
+                    await commands.WaitAsync(token);
+                    try
+                    {
+                        if (intent != owner) return;
+                        // PATCH may have changed volume during asynchronous preparation.
+                        prepared.Volume = Status.Volume;
+                        run = Install(prepared, owner);
+                        prepared = null;
+                    }
+                    finally { commands.Release(); }
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception)
+                {
+                    lock (stateLock)
+                        if (intent == owner) status = status with { State = "reconnecting", Error = "output_unavailable", LastError = "output_unavailable" };
+                    ReportRecovery();
+                }
+                finally { prepared?.Dispose(); }
             }
-            finally { commands.Release(); }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
     }
@@ -152,15 +220,20 @@ public sealed class DivoomAudioPlayer(IAudioPlaybackBackend backend, TimeSpan? s
     private static void Release(AudioPlaybackRun? run)
     {
         if (run is null) return;
-        run.Cancellation.Cancel();
         run.Session.StateChanged -= run.Handler;
         run.Session.Dispose();
     }
 
-    private static async Task FinishAsync(AudioPlaybackRun run)
+    private static async Task FinishAsync(AudioPlaybackIntent owner)
     {
-        await run.Monitor;
-        run.Cancellation.Dispose();
+        await owner.Worker;
+        owner.Cancellation.Dispose();
+    }
+
+    private void ReportRecovery()
+    {
+        // Diagnostics must not interfere with playback ownership or cleanup.
+        try { reportRecovery?.Invoke(Status); } catch { }
     }
 
     private static void ValidateVolume(double volume)

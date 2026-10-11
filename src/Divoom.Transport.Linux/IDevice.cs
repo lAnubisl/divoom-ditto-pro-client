@@ -8,5 +8,6 @@ namespace Divoom.BlueZ;
 public interface IDevice : IDBusObject
 {
     Task ConnectAsync();
+    Task ConnectProfileAsync(string uuid);
     Task DisconnectAsync();
 }

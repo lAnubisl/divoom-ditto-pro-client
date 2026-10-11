@@ -22,13 +22,13 @@ internal sealed class FakeTransport : IDittoProTransport
     public List<byte[]> Packets { get; } = [];
     public List<byte[]> Writes { get; } = [];
     public event Action<ReadOnlyMemory<byte>>? NotificationReceived;
-    public Task ConnectAsync(CancellationToken cancellationToken = default)
+    public Task ConnectAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested(); ConnectCount++;
         if (ConnectFailuresRemaining > 0) { ConnectFailuresRemaining--; throw new IOException("Transient connection failure"); }
         IsConnected = true; buffer.Clear(); return Task.CompletedTask;
     }
-    public Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested(); Assert.That(IsConnected && data.Length <= MaxWriteSize, Is.True, "Write contract");
         Writes.Add(data.ToArray()); buffer.AddRange(data.ToArray());
@@ -63,6 +63,6 @@ internal sealed class FakeTransport : IDittoProTransport
         BinaryPrimitives.WriteUInt16LittleEndian(result.AsSpan(result.Length - 3), (ushort)result.AsSpan(1, payload.Length + 2).ToArray().Sum(b => (int)b));
         return result;
     }
-    public Task DisconnectAsync(CancellationToken cancellationToken = default) { DisconnectCount++; IsConnected = false; buffer.Clear(); return Task.CompletedTask; }
-    public async ValueTask DisposeAsync() { Disposed = true; await DisconnectAsync(); }
+    public Task DisconnectAsync(CancellationToken cancellationToken) { DisconnectCount++; IsConnected = false; buffer.Clear(); return Task.CompletedTask; }
+    public async ValueTask DisposeAsync() { Disposed = true; await DisconnectAsync( cancellationToken: CancellationToken.None); }
 }

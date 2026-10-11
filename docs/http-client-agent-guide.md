@@ -166,22 +166,33 @@ to the device API, never to the station. Volume defaults to 0.25 when omitted.
 GET, PATCH and DELETE return HTTP 200 with, for example:
 
 ```json
-{"state":"playing","volume":0.25,"error":null}
+{"state":"playing","volume":0.25,"error":null,"retryAttempts":0,"lastError":null}
 ```
 
-Possible states are `stopped`, `starting`, `buffering`, `playing`, `failed`, and
+Possible states are `stopped`, `starting`, `buffering`, `playing`, `reconnecting`, `failed`, and
 `unavailable`. Poll after 202; it means the start command was accepted, not that
 audio is already audible. The startup deadline is 20 seconds. Failure codes
-are `startup_timeout`, `stream_failed`, `audio_not_configured`, and
-`platform_unsupported`. An absent output or unavailable audio backend gives
-503 on valid start/volume requests. Invalid URL/volume gives 400.
+are `startup_timeout`, `stream_failed`, `output_unavailable`, `audio_not_configured`,
+and `platform_unsupported`. By default, an absent output accepts a start with 202
+and `reconnecting`; `retryAttempts` counts recovery attempts and `lastError` keeps
+the last stable recovery code. With recovery disabled, an absent output gives 503.
+An unsuccessful replacement preserves an active station and gives 503.
+Invalid URL/volume gives 400. Unconfigured/unsupported audio remains unavailable.
 
 One stream is shared by clients of this server. A new URL replaces it; repeating
 the active URL changes volume without restarting. PATCH requires a volume from
 0 to 1; DELETE is idempotent. Playback survives completion of the start request
-and continues until stopped, replaced, finished/failed, or server shutdown.
+and continues until stopped, replaced, or server shutdown. By default, ended or
+failed streams retry automatically with the same URL and latest volume, waiting
+2, 5, 10, 30, then 60 seconds between attempts. Each recovery preparation and
+playback startup has a 20-second deadline. Poll GET during recovery rather than
+repeatedly sending PUT. PATCH updates volume while waiting; DELETE cancels recovery.
+Station selection is held in memory and does not survive API restart. Linux A2DP
+reconnection requires operator configuration of `DIVOOM_AUDIO_BLUETOOTH_ADDRESS`;
+otherwise only stream reopening is attempted. The API does not reset USB or host services.
 Audio commands have a 15-second deadline; the display/time deadline and retry
-policy below do not apply. Failed streams are not automatically reconnected.
+policy below do not apply. Operators can disable recovery with
+`DIVOOM_AUDIO_AUTO_RECONNECT=false`, leaving completed/failed streams terminal.
 
 ## Gallery-to-device flow
 

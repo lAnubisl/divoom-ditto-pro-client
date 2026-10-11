@@ -19,8 +19,8 @@ public sealed class BlueZBleTransport : IDittoProTransport
     private volatile int maxWriteSize;
     private int generation, stateVersion;
 
-    public BlueZBleTransport(string bluetoothAddress, BlueZTransportOptions? options = null)
-        : this(bluetoothAddress, options ?? new(), null) { }
+    public BlueZBleTransport(string bluetoothAddress, BlueZTransportOptions options)
+        : this(bluetoothAddress, options, null) { }
 
     internal BlueZBleTransport(string bluetoothAddress, BlueZTransportOptions options, Func<IBlueZBus>? createBus)
     {
@@ -43,7 +43,7 @@ public sealed class BlueZBleTransport : IDittoProTransport
     public event Action<ReadOnlyMemory<byte>>? NotificationReceived;
     private string AdapterPath => adapterPath ?? throw new InvalidOperationException("BlueZ adapter has not been resolved.");
 
-    public async Task ConnectAsync(CancellationToken cancellationToken = default)
+    public async Task ConnectAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         await operations.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -190,7 +190,7 @@ public sealed class BlueZBleTransport : IDittoProTransport
         NotificationReceived?.Invoke(bytes.ToArray());
     }
 
-    public async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         await operations.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -205,7 +205,7 @@ public sealed class BlueZBleTransport : IDittoProTransport
         finally { operations.Release(); }
     }
 
-    public async Task DisconnectAsync(CancellationToken cancellationToken = default)
+    public async Task DisconnectAsync(CancellationToken cancellationToken)
     {
         await operations.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { await DisconnectCoreAsync(cancellationToken).ConfigureAwait(false); }

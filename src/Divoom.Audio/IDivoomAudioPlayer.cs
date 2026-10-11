@@ -4,7 +4,7 @@ namespace Divoom;
 public interface IDivoomAudioPlayer : IAsyncDisposable
 {
     AudioPlaybackStatus Status { get; }
-    Task StartAsync(Uri source, double volume = 0.25, CancellationToken cancellationToken = default);
-    Task SetVolumeAsync(double volume, CancellationToken cancellationToken = default);
-    Task StopAsync(CancellationToken cancellationToken = default);
+    Task StartAsync(Uri source, double volume, CancellationToken cancellationToken);
+    Task SetVolumeAsync(double volume, CancellationToken cancellationToken);
+    Task StopAsync(CancellationToken cancellationToken);
 }

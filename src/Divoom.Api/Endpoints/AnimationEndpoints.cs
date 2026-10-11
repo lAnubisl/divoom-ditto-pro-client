@@ -12,7 +12,7 @@ internal static class AnimationEndpoints
         using var stream = await MediaUpload.ReadAsync(request, gif: true, timeout.Token);
         var frames = MediaUpload.Decode(() => DittoMedia.LoadGif(stream));
         _ = DittoMediaPreparation.AnimationFileSize(frames); // Validate the upload bound before accessing Bluetooth.
-        await client.SendAnimationAsync(frames, cancellationToken: timeout.Token);
+        await client.SendAnimationAsync(frames, cancellationToken: timeout.Token, slot: 0);
         return Results.Ok(new { status = "sent", frames = frames.Count });
     }
 }

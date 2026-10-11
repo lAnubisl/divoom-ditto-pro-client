@@ -20,11 +20,12 @@ public sealed class DittoProClient : IDittoProClient
     private bool initialized;
     private bool disposed;
 
-    public DittoProClient(IDittoProTransport transport, DittoProClientOptions? options = null)
+    public DittoProClient(IDittoProTransport transport, DittoProClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(transport);
+        ArgumentNullException.ThrowIfNull(options);
         this.transport = transport;
-        this.options = options ?? new();
+        this.options = options;
         ArgumentNullException.ThrowIfNull(this.options.TimeProvider);
         ArgumentNullException.ThrowIfNull(this.options.TimeZone);
         if (this.options.ControllerId == Guid.Empty || this.options.AcknowledgementTimeout <= TimeSpan.Zero ||
@@ -34,7 +35,7 @@ public sealed class DittoProClient : IDittoProClient
     }
 
     /// <summary>Reserved for internal self-diagnostics: check the byte channel without sending device commands and keep it open.</summary>
-    private async Task CheckConnectionAsync(CancellationToken cancellationToken = default)
+    private async Task CheckConnectionAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         await operations.WaitAsync(cancellationToken);
@@ -61,7 +62,7 @@ public sealed class DittoProClient : IDittoProClient
     }
 
     /// <inheritdoc />
-    public Task SendImageAsync(DittoImage image, CancellationToken cancellationToken = default)
+    public Task SendImageAsync(DittoImage image, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(image);
         var payload = DivoomProtocol.EncodeImage(image.Rgb.ToArray());
@@ -71,20 +72,20 @@ public sealed class DittoProClient : IDittoProClient
     private async Task SendImagePayloadAsync(byte[] payload, CancellationToken token)
     {
         if (payload[11] == 1)
-            await SendPayloadAsync([0x45, 1, payload[12], payload[13], payload[14], 100, 0, 1], token);
+            await SendPayloadAsync([0x45, 1, payload[12], payload[13], payload[14], 100, 0, 1], token, waitForAcknowledgement: true, commandAcknowledgement: -1);
         else
         {
             var slot = imageSlot;
             imageSlot = unchecked((byte)(imageSlot + 3));
-            await SendPayloadAsync([0xBD, 0x31, slot, 1], token);
-            await SendPayloadAsync([0x9F, unchecked((byte)(slot + 0xB1))], token);
-            await SendPayloadAsync(payload, token);
+            await SendPayloadAsync([0xBD, 0x31, slot, 1], token, waitForAcknowledgement: true, commandAcknowledgement: -1);
+            await SendPayloadAsync([0x9F, unchecked((byte)(slot + 0xB1))], token, waitForAcknowledgement: true, commandAcknowledgement: -1);
+            await SendPayloadAsync(payload, token, waitForAcknowledgement: true, commandAcknowledgement: -1);
         }
         options.Log?.Invoke("IMAGE_RECEIVED: image command acknowledged by device.");
     }
 
     /// <inheritdoc />
-    public Task SendAnimationAsync(IReadOnlyList<DittoAnimationFrame> frames, byte slot = 0, CancellationToken cancellationToken = default)
+    public Task SendAnimationAsync(IReadOnlyList<DittoAnimationFrame> frames, byte slot, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(frames);
         if (slot != 0) throw new NotSupportedException("The Ditoo Pro animation transfer has no slot field; use slot zero.");
@@ -92,7 +93,7 @@ public sealed class DittoProClient : IDittoProClient
         var count = (stream.Length + 255) / 256;
         return RunAsync(async token =>
         {
-            await SendPayloadAsync(DivoomProtocol.AnimationAnnounce(stream.Length), token, commandAcknowledgement: 0x8B);
+            await SendPayloadAsync(DivoomProtocol.AnimationAnnounce(stream.Length), token, commandAcknowledgement: 0x8B, waitForAcknowledgement: true);
             for (var index = 0; index < count; index++)
             {
                 var offset = index * 256;
@@ -106,26 +107,26 @@ public sealed class DittoProClient : IDittoProClient
     }
 
     /// <inheritdoc />
-    public Task SendCurrentDateTimeAsync(CancellationToken cancellationToken = default) =>
+    public Task SendCurrentDateTimeAsync(CancellationToken cancellationToken) =>
         RunAsync(token => SendTimeAsync(CurrentTime(), token), cancellationToken);
 
     /// <inheritdoc />
-    public Task SendDateTimeAsync(DateTimeOffset value, CancellationToken cancellationToken = default) =>
+    public Task SendDateTimeAsync(DateTimeOffset value, CancellationToken cancellationToken) =>
         RunAsync(token => SendTimeAsync(value, token), cancellationToken);
 
     /// <inheritdoc />
-    public Task ShowClockAsync(CancellationToken cancellationToken = default) =>
+    public Task ShowClockAsync(CancellationToken cancellationToken) =>
         ShowClockAsync(0, 0x00FF00, cancellationToken);
 
     /// <inheritdoc />
-    public Task ShowClockAsync(byte style, uint color, CancellationToken cancellationToken = default)
+    public Task ShowClockAsync(byte style, uint color, CancellationToken cancellationToken)
     {
         if (style > 15) throw new ArgumentOutOfRangeException(nameof(style));
         if (color > 0xFFFFFF) throw new ArgumentOutOfRangeException(nameof(color));
         return RunAsync(async token =>
         {
             await SendPayloadAsync([0x45, 0x00, 0x01, style, 0x01, 0x00, 0x00, 0x00,
-                (byte)(color >> 16), (byte)(color >> 8), (byte)color], token);
+                (byte)(color >> 16), (byte)(color >> 8), (byte)color], token, waitForAcknowledgement: true, commandAcknowledgement: -1);
             options.Log?.Invoke($"CLOCK_SELECTED: style={style}; color=#{color:X6}; command acknowledged; display rendering is not verified.");
         }, cancellationToken);
     }
@@ -134,7 +135,7 @@ public sealed class DittoProClient : IDittoProClient
 
     private async Task SendTimeAsync(DateTimeOffset now, CancellationToken token)
     {
-        await SendPayloadAsync(DivoomProtocol.TimePayload(now), token, commandAcknowledgement: 0x18);
+        await SendPayloadAsync(DivoomProtocol.TimePayload(now), token, commandAcknowledgement: 0x18, waitForAcknowledgement: true);
         options.Log?.Invoke($"TIME_SENT: {now:O}; command acknowledged; device clock readback is not verified.");
     }
 
@@ -173,7 +174,7 @@ public sealed class DittoProClient : IDittoProClient
         // Keep the portable client independent of the Linux transport's D-Bus package.
         error.GetType().FullName is "Tmds.DBus.DBusException" or "Tmds.DBus.DisconnectedException";
 
-    private async Task DisconnectTransportAsync(bool suppressErrors = false)
+    private async Task DisconnectTransportAsync(bool suppressErrors)
     {
         initialized = false;
         lock (receiveLock) { acknowledgement = null; expectedSequence = -1; expectedCommand = -1; decoder = new(); }
@@ -194,27 +195,27 @@ public sealed class DittoProClient : IDittoProClient
         imageSlot = 0;
         var now = CurrentTime();
         var json = JsonSerializer.Serialize(new { Command = "Device/SetUTC", Utc = now.ToUnixTimeSeconds(), Time = now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) }).Replace("/", "\\/");
-        await SendPayloadAsync(Encoding.UTF8.GetBytes(json), token, waitForAcknowledgement: false);
+        await SendPayloadAsync(Encoding.UTF8.GetBytes(json), token, waitForAcknowledgement: false, commandAcknowledgement: -1);
         sequence = 0x0101;
         await SendTimeAsync(now, token);
         string[] init = ["BD1F01", "8E00", "BD13", "BD18", "BD15", "BD17FF", "BD2500", "BD2600", "BD27", "46",
             "26FF", "15", "B6FF", "9700", "36", "3700", "8A00", "B0", "A2", "42", "59", "76"];
-        foreach (var hex in init) await SendPayloadAsync(Convert.FromHexString(hex), token);
+        foreach (var hex in init) await SendPayloadAsync(Convert.FromHexString(hex), token, waitForAcknowledgement: true, commandAcknowledgement: -1);
         var controller = new byte[] { 0x4F }.Concat(Encoding.ASCII.GetBytes(options.ControllerId.ToString().ToUpperInvariant()[..16])).ToArray();
-        await SendPayloadAsync(controller, token);
-        foreach (var hex in new[] { "76", "2702", "5F150B" }) await SendPayloadAsync(Convert.FromHexString(hex), token);
+        await SendPayloadAsync(controller, token, waitForAcknowledgement: true, commandAcknowledgement: -1);
+        foreach (var hex in new[] { "76", "2702", "5F150B" }) await SendPayloadAsync(Convert.FromHexString(hex), token, waitForAcknowledgement: true, commandAcknowledgement: -1);
         // Opaque display configuration observed during normal iOS initialization; see third-party notices.
-        await SendPayloadAsync(Convert.FromHexString("5DEA0705111400281602140B120A100A120113011501150111010E0A0D0A0D0A0F0114011601130111010E0A0D0A0C0C0D041104120310040D020C0B0B0C0B0C0D03110313020F020E010D0A0C0A0C0A0D02100311031003"), token);
-        await SendPayloadAsync(Convert.FromHexString("9B014E6F620241040000"), token);
+        await SendPayloadAsync(Convert.FromHexString("5DEA0705111400281602140B120A100A120113011501150111010E0A0D0A0D0A0F0114011601130111010E0A0D0A0C0C0D041104120310040D020C0B0B0C0B0C0D03110313020F020E010D0A0C0A0C0A0D02100311031003"), token, waitForAcknowledgement: true, commandAcknowledgement: -1);
+        await SendPayloadAsync(Convert.FromHexString("9B014E6F620241040000"), token, waitForAcknowledgement: true, commandAcknowledgement: -1);
         await Task.Delay(options.InitializationPause, token);
-        await SendPayloadAsync([0xBA, 1], token);
-        await SendPayloadAsync(controller, token);
-        foreach (var hex in new[] { "76", "2702", "BD2F02", "31" }) await SendPayloadAsync(Convert.FromHexString(hex), token);
+        await SendPayloadAsync([0xBA, 1], token, waitForAcknowledgement: true, commandAcknowledgement: -1);
+        await SendPayloadAsync(controller, token, waitForAcknowledgement: true, commandAcknowledgement: -1);
+        foreach (var hex in new[] { "76", "2702", "BD2F02", "31" }) await SendPayloadAsync(Convert.FromHexString(hex), token, waitForAcknowledgement: true, commandAcknowledgement: -1);
         initialized = true;
         options.Log?.Invoke("SESSION_READY");
     }
 
-    private async Task SendPayloadAsync(byte[] payload, CancellationToken token, bool waitForAcknowledgement = true, int commandAcknowledgement = -1)
+    private async Task SendPayloadAsync(byte[] payload, CancellationToken token, bool waitForAcknowledgement, int commandAcknowledgement)
     {
         var current = sequence++;
         var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);

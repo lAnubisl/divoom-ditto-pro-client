@@ -11,7 +11,7 @@ public static class WindowsBluetoothDiscovery
     private static readonly string[] Properties =
         ["System.Devices.Aep.DeviceAddress", "System.Devices.Aep.IsConnected", "System.Devices.Aep.IsPresent", "System.Devices.Aep.ProtocolId"];
 
-    public static async Task<IReadOnlyList<WindowsBluetoothEndpoint>> ScanAsync(TimeSpan duration, Action<string>? log = null, CancellationToken cancellationToken = default)
+    public static async Task<IReadOnlyList<WindowsBluetoothEndpoint>> ScanAsync(TimeSpan duration, Action<string>? log, CancellationToken cancellationToken)
     {
         if (duration <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(duration));
         var adapter = await BluetoothAdapter.GetDefaultAsync().AsTask(cancellationToken)
@@ -41,7 +41,7 @@ public static class WindowsBluetoothDiscovery
         return endpoints;
     }
 
-    public static async Task<IReadOnlyList<WindowsBluetoothEndpoint>> ScanClassicAsync(CancellationToken cancellationToken = default)
+    public static async Task<IReadOnlyList<WindowsBluetoothEndpoint>> ScanClassicAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // Native inquiry is synchronous; cancellation is checked again after it returns.

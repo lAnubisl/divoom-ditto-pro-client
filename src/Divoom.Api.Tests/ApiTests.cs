@@ -50,7 +50,7 @@ public sealed class ApiTests
     {
         await Assert.ThatAsync(async () =>
         {
-            await using var invalid = ApiHost.Build(["--DIVOOM_API_KEY", "", "--DIVOOM_ADDRESS", "B1:21:81:4B:E6:42"]);
+            await using var invalid = ApiHost.Build(["--DIVOOM_API_KEY", "", "--DIVOOM_ADDRESS", "B1:21:81:4B:E6:42"], configure: null);
         }, Throws.TypeOf<InvalidOperationException>().With.Message.Contains("DIVOOM_API_KEY"));
     }
 
@@ -60,19 +60,19 @@ public sealed class ApiTests
         foreach (var route in new[] { "/api/health", "/api/images", "/api/animations", "/api/time", "/api/time/current", "/api/display/clock", "/unknown" })
         {
             using var request = new HttpRequestMessage(route == "/api/health" || route == "/unknown" ? HttpMethod.Get : HttpMethod.Post, route);
-            await Status(await http.SendAsync(request), HttpStatusCode.Unauthorized);
+            await Status(await http.SendAsync(request), HttpStatusCode.Unauthorized, forbidden: null);
         }
         using (var wrong = new HttpRequestMessage(HttpMethod.Get, "/api/health"))
         {
             wrong.Headers.Add("X-Api-Key", "wrong");
-            await Status(await http.SendAsync(wrong), HttpStatusCode.Unauthorized);
+            await Status(await http.SendAsync(wrong), HttpStatusCode.Unauthorized, forbidden: null);
         }
         using (var duplicate = new HttpRequestMessage(HttpMethod.Get, "/api/health"))
         {
             duplicate.Headers.TryAddWithoutValidation("X-Api-Key", new[] { key, key });
-            await Status(await http.SendAsync(duplicate), HttpStatusCode.Unauthorized);
+            await Status(await http.SendAsync(duplicate), HttpStatusCode.Unauthorized, forbidden: null);
         }
-        await Status(await http.GetAsync($"/api/health?api_key={key}"), HttpStatusCode.Unauthorized);
+        await Status(await http.GetAsync($"/api/health?api_key={key}"), HttpStatusCode.Unauthorized, forbidden: null);
         Assert.That(creations, Is.Zero, "Unauthorized calls resolved the device client.");
     }
 
@@ -80,9 +80,9 @@ public sealed class ApiTests
     public async Task HealthAndUnknownRouteDoNotResolveDevice()
     {
         http.DefaultRequestHeaders.Add("X-Api-Key", key);
-        await Status(await http.GetAsync("/api/health"), HttpStatusCode.OK);
+        await Status(await http.GetAsync("/api/health"), HttpStatusCode.OK, forbidden: null);
         Assert.That(creations, Is.Zero, "Health opened a device client.");
-        await Status(await http.GetAsync("/unknown"), HttpStatusCode.NotFound);
+        await Status(await http.GetAsync("/unknown"), HttpStatusCode.NotFound, forbidden: null);
     }
 
     [Test]
@@ -93,9 +93,9 @@ public sealed class ApiTests
         Assert.That(device.Images, Is.EqualTo(1), "Image was not sent.");
         await Upload("/api/animations", File.ReadAllBytes(Fixture("mail-14.gif")), "image/gif", HttpStatusCode.OK);
         Assert.That(device.Frames, Is.EqualTo(9), "GIF frames were not preserved.");
-        await Status(await http.PostAsync("/api/time/current", null), HttpStatusCode.OK);
+        await Status(await http.PostAsync("/api/time/current", null), HttpStatusCode.OK, forbidden: null);
         var value = DateTimeOffset.Parse("2026-10-06T12:34:56+02:00");
-        await Status(await http.PostAsJsonAsync("/api/time", new { value }), HttpStatusCode.OK);
+        await Status(await http.PostAsJsonAsync("/api/time", new { value }), HttpStatusCode.OK, forbidden: null);
         Assert.That(device.CurrentTimes == 1 && device.Time == value, Is.True, "Date/time operations were not forwarded.");
         using (var clock = await http.PostAsync("/api/display/clock", null))
         {
@@ -139,7 +139,7 @@ public sealed class ApiTests
     {
         http.DefaultRequestHeaders.Add("X-Api-Key", key);
         using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-        await Status(await http.PostAsync("/api/display/clock", content), HttpStatusCode.BadRequest);
+        await Status(await http.PostAsync("/api/display/clock", content), HttpStatusCode.BadRequest, forbidden: null);
         Assert.That(device.Clocks, Is.Zero);
     }
 
@@ -147,8 +147,8 @@ public sealed class ApiTests
     public async Task InvalidRequestsDoNotReachDevice()
     {
         http.DefaultRequestHeaders.Add("X-Api-Key", key);
-        await Status(await http.PostAsJsonAsync("/api/time", new { }), HttpStatusCode.BadRequest);
-        await Status(await http.PostAsync("/api/time", new StringContent("{broken", System.Text.Encoding.UTF8, "application/json")), HttpStatusCode.BadRequest);
+        await Status(await http.PostAsJsonAsync("/api/time", new { }), HttpStatusCode.BadRequest, forbidden: null);
+        await Status(await http.PostAsync("/api/time", new StringContent("{broken", System.Text.Encoding.UTF8, "application/json")), HttpStatusCode.BadRequest, forbidden: null);
         await Upload("/api/images", [], "image/png", HttpStatusCode.BadRequest);
         await Upload("/api/images", [1, 2, 3], "image/png", HttpStatusCode.BadRequest);
         await Upload("/api/images", [1], "text/plain", HttpStatusCode.UnsupportedMediaType);
@@ -186,13 +186,13 @@ public sealed class ApiTests
             await network.StartAsync();
             var address = network.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
             using var http = new HttpClient { BaseAddress = new Uri(address) };
-            await Status(await http.GetAsync("/api/health"), HttpStatusCode.Unauthorized);
+            await Status(await http.GetAsync("/api/health"), HttpStatusCode.Unauthorized, forbidden: null);
             http.DefaultRequestHeaders.Add("X-Api-Key", key);
-            await Status(await http.GetAsync("/api/health"), HttpStatusCode.OK);
-            await Status(await http.PostAsync("/api/time/current", null), HttpStatusCode.OK);
+            await Status(await http.GetAsync("/api/health"), HttpStatusCode.OK, forbidden: null);
+            await Status(await http.PostAsync("/api/time/current", null), HttpStatusCode.OK, forbidden: null);
             using var large = new ByteArrayContent(new byte[2 * 1024 * 1024 + 1]);
             large.Headers.ContentType = new MediaTypeHeaderValue("image/png");
-            await Status(await http.PostAsync("/api/images", large), HttpStatusCode.RequestEntityTooLarge);
+            await Status(await http.PostAsync("/api/images", large), HttpStatusCode.RequestEntityTooLarge, forbidden: null);
             await network.StopAsync();
         }
     }
@@ -201,11 +201,11 @@ public sealed class ApiTests
     {
         using var content = new ByteArrayContent(bytes);
         content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
-        await Status(await http.PostAsync(path, content), expected);
+        await Status(await http.PostAsync(path, content), expected, forbidden: null);
     }
 
     private static string Fixture(string name) => Path.Combine(AppContext.BaseDirectory, "fixtures", name);
-    private static async Task Status(HttpResponseMessage response, HttpStatusCode expected, string? forbidden = null)
+    private static async Task Status(HttpResponseMessage response, HttpStatusCode expected, string? forbidden)
     {
         using (response)
         {

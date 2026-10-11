@@ -26,7 +26,7 @@ public sealed class AudioApiTests
         {
             builder.WebHost.UseTestServer();
             builder.Logging.ClearProviders();
-            builder.Services.AddSingleton<IDivoomAudioPlayer>(_ => new DivoomAudioPlayer(backend));
+            builder.Services.AddSingleton<IDivoomAudioPlayer>(_ => new DivoomAudioPlayer(backend, recovery: new() { Enabled = false }, startupTimeout: TimeSpan.FromSeconds(20), reportRecovery: null));
         });
         await app.StartAsync();
         http = app.GetTestClient();
@@ -61,7 +61,7 @@ public sealed class AudioApiTests
             Assert.That(start.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
             Assert.That(start.Headers.Location?.ToString(), Is.EqualTo(Route));
         }
-        Assert.That(await http.GetFromJsonAsync<AudioPlaybackStatus>(Route), Is.EqualTo(new AudioPlaybackStatus("playing", 0.25)));
+        Assert.That(await http.GetFromJsonAsync<AudioPlaybackStatus>(Route), Is.EqualTo(new AudioPlaybackStatus("playing", 0.25, Error: null, RetryAttempts: 0, LastError: null)));
         using (var volume = await http.PatchAsJsonAsync(Route, new { volume = 0.4 })) Assert.That(volume.StatusCode, Is.EqualTo(HttpStatusCode.OK));
         Assert.That(backend.Sessions[0].Volume, Is.EqualTo(0.4));
         using (var stop = await http.DeleteAsync(Route)) Assert.That(stop.StatusCode, Is.EqualTo(HttpStatusCode.OK));
@@ -122,6 +122,7 @@ public sealed class AudioApiTests
         await using var disabled = ApiHost.Build(Settings, builder =>
         {
             builder.Configuration["DIVOOM_AUDIO_DEVICE"] = output;
+            builder.Configuration["DIVOOM_AUDIO_AUTO_RECONNECT"] = "false";
             builder.WebHost.UseTestServer();
             builder.Logging.ClearProviders();
         });
@@ -129,10 +130,35 @@ public sealed class AudioApiTests
         using var client = disabled.GetTestClient();
         client.DefaultRequestHeaders.Add("X-Api-Key", "audio-test-key");
         var expected = OperatingSystem.IsLinux() && output.Length > 0
-            ? new AudioPlaybackStatus("stopped", 0.25)
-            : new AudioPlaybackStatus("unavailable", 0.25, reason);
+            ? new AudioPlaybackStatus("stopped", 0.25, Error: null, RetryAttempts: 0, LastError: null)
+            : new AudioPlaybackStatus("unavailable", 0.25, reason, RetryAttempts: 0, LastError: null);
         Assert.That(await client.GetFromJsonAsync<AudioPlaybackStatus>(Route), Is.EqualTo(expected));
         using var response = await client.PutAsJsonAsync(Route, new { url = "https://radio.example/live" });
         Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+    }
+
+    [Test]
+    public async Task MissingOutputWithRecoveryAcceptsStartAndStopCancelsIt()
+    {
+        backend.Error = new AudioUnavailableException("private output detail");
+        await using var recovering = ApiHost.Build(Settings, builder =>
+        {
+            builder.WebHost.UseTestServer();
+            builder.Logging.ClearProviders();
+            builder.Services.AddSingleton<IDivoomAudioPlayer>(_ => new DivoomAudioPlayer(backend, startupTimeout: TimeSpan.FromSeconds(20), recovery: new AudioRecoveryOptions(), reportRecovery: null));
+        });
+        await recovering.StartAsync();
+        using var client = recovering.GetTestClient();
+        client.DefaultRequestHeaders.Add("X-Api-Key", "audio-test-key");
+        using var response = await client.PutAsJsonAsync(Route, new { url = "https://radio.example/live" });
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Accepted));
+        var json = await response.Content.ReadAsStringAsync();
+        Assert.That(json, Does.Not.Contain("private output detail").And.Not.Contain("radio.example"));
+        var status = await client.GetFromJsonAsync<AudioPlaybackStatus>(Route);
+        Assert.That(status!.State, Is.EqualTo("reconnecting"));
+        Assert.That(status.LastError, Is.EqualTo("output_unavailable"));
+        using var stop = await client.DeleteAsync(Route);
+        Assert.That(stop.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+        Assert.That((await client.GetFromJsonAsync<AudioPlaybackStatus>(Route))!.State, Is.EqualTo("stopped"));
     }
 }

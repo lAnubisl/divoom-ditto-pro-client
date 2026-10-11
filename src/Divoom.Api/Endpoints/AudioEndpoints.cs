@@ -27,7 +27,7 @@ internal static class AudioEndpoints
     private static async Task<IResult> SetVolumeAsync(AudioVolumeRequest request,
         IDivoomAudioPlayer player, HttpRequest http, IHostApplicationLifetime lifetime)
     {
-        var volume = AudioStreamPolicy.ValidateVolume(request.Volume);
+        var volume = AudioStreamPolicy.ValidateVolume(request.Volume, defaultValue: null);
         using var timeout = CreateCommandTimeout(http, lifetime);
         await player.SetVolumeAsync(volume, timeout.Token);
         return Results.Ok(player.Status);

@@ -57,14 +57,14 @@ internal sealed class LinuxAudioPlaybackSession : IAudioPlaybackSession
         }
     }
 
-    public static async Task<LinuxAudioPlaybackSession> OpenAsync(string sink, Uri source, double volume, CancellationToken cancellationToken)
+    public static async Task<LinuxAudioPlaybackSession> OpenAsync(string sink, Uri source, double volume, CancellationToken cancellationToken, bool waitForSink)
     {
         if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException();
         var directory = Path.Combine(Path.GetTempPath(), "divoom-audio-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var socketPath = Path.Combine(directory, "ipc");
         var device = "pulse/" + sink;
-        var start = LinuxAudioProcess.CreateStartInfo(device, volume, socketPath);
+        var start = LinuxAudioProcess.CreateStartInfo(device, volume, socketPath, new ProcessStartInfo().Environment);
         Process? process = null;
         Socket? socket = null;
         LinuxAudioPlaybackSession? session = null;
@@ -88,6 +88,16 @@ internal sealed class LinuxAudioPlaybackSession : IAudioPlaybackSession
             }
             session = new LinuxAudioPlaybackSession(process, socket, directory, device, source, volume);
             var devices = await session.SendAsync(["get_property", "audio-device-list"], cancellationToken);
+            if (waitForSink)
+            {
+                using var sinkTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                sinkTimeout.CancelAfter(TimeSpan.FromSeconds(5));
+                while (!HasDevice(devices, device))
+                {
+                    await Task.Delay(200, sinkTimeout.Token);
+                    devices = await session.SendAsync(["get_property", "audio-device-list"], sinkTimeout.Token);
+                }
+            }
             if (!HasDevice(devices, device)) throw new AudioUnavailableException("The configured PulseAudio sink is unavailable.");
             await session.SendAsync(["observe_property", 1, "audio-params"], cancellationToken);
             await session.SendAsync(["observe_property", 2, "paused-for-cache"], cancellationToken);

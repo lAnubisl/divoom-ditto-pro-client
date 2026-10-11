@@ -2,5 +2,7 @@ namespace Divoom;
 
 public sealed class AudioUnavailableException : IOException
 {
-    public AudioUnavailableException(string message, Exception? innerException = null) : base(message, innerException) { }
+    public AudioUnavailableException(string message) : this(message, innerException: null) { }
+
+    public AudioUnavailableException(string message, Exception? innerException) : base(message, innerException) { }
 }

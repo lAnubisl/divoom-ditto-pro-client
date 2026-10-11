@@ -18,7 +18,7 @@ internal sealed class AudioStreamPolicy(IConfiguration configuration)
         return uri;
     }
 
-    public static double ValidateVolume(double? volume, double? defaultValue = null)
+    public static double ValidateVolume(double? volume, double? defaultValue)
     {
         var value = volume ?? defaultValue ?? throw new ArgumentException("Volume is required.");
         if (!double.IsFinite(value) || value is < 0 or > 1)

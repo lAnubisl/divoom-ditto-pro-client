@@ -9,7 +9,7 @@ namespace Divoom.Api;
 
 public static class ApiHost
 {
-    public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configure = null)
+    public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configure)
     {
         var builder = WebApplication.CreateBuilder(args);
         var key = builder.Configuration["DIVOOM_API_KEY"];
@@ -24,7 +24,8 @@ public static class ApiHost
             .RequireAuthenticatedUser().Build());
         builder.Services.AddProblemDetails();
         builder.Services.AddSingleton<AudioStreamPolicy>();
-        builder.Services.AddSingleton<IDivoomAudioPlayer>(_ => AudioPlayerFactory.Create(builder.Configuration));
+        builder.Services.AddSingleton<IDivoomAudioPlayer>(services => AudioPlayerFactory.Create(builder.Configuration,
+            services.GetRequiredService<ILogger<DivoomAudioPlayer>>()));
         builder.Services.AddHostedService<AudioPlaybackLifetime>();
         builder.Services.AddSingleton<IDittoProClient>(services =>
         {

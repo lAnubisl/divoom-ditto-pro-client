@@ -7,10 +7,15 @@ internal sealed class FakeAudioBackend : IAudioPlaybackBackend
     public bool AutoPlay { get; set; } = true;
     public Exception? Error { get; set; }
     public Action? OnOpen { get; set; }
+    public Func<Uri, double, CancellationToken, Task<IAudioPlaybackSession>>? OpenOverride { get; set; }
+    public Func<CancellationToken, Task>? OnRecovery { get; set; }
+    public Task PrepareRecoveryAsync(CancellationToken cancellationToken) =>
+        OnRecovery?.Invoke(cancellationToken) ?? Task.CompletedTask;
 
-    public Task<IAudioPlaybackSession> OpenAsync(Uri source, double volume, CancellationToken cancellationToken = default)
+    public Task<IAudioPlaybackSession> OpenAsync(Uri source, double volume, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (OpenOverride is not null) return OpenOverride(source, volume, cancellationToken);
         if (Error is not null) return Task.FromException<IAudioPlaybackSession>(Error);
         Source = source;
         var session = new FakeAudioSession(AutoPlay) { Volume = volume };

@@ -8,6 +8,8 @@ internal sealed class TestEndpoint(string path, string iface, IDictionary<string
     private event Action<(string Interface, IDictionary<string, object> Changed, string[] Invalidated)>? changed;
     public int ConnectCount, DisconnectCount, StartCount, StopCount;
     public int DiscoveryStarts, DiscoveryStops;
+    public string? ConnectedProfile;
+    public Task ConnectProfileAsync(string uuid) { ConnectedProfile = uuid; return Task.CompletedTask; }
     public IDictionary<string, object> Properties => properties;
     public Action? OnDiscovery;
     public Func<Task>? OnStart;

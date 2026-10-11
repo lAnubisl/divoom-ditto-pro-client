@@ -9,8 +9,8 @@ public interface IDittoProTransport : IAsyncDisposable
     /// <summary>May arrive on any thread; implementations must provide stable, copied bytes.</summary>
     event Action<ReadOnlyMemory<byte>>? NotificationReceived;
     /// <summary>Connect and subscribe to notifications before returning. Must support reconnect after DisconnectAsync.</summary>
-    Task ConnectAsync(CancellationToken cancellationToken = default);
+    Task ConnectAsync(CancellationToken cancellationToken);
     /// <summary>Write one chunk with flow control. Throw when transmission fails.</summary>
-    Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default);
-    Task DisconnectAsync(CancellationToken cancellationToken = default);
+    Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken);
+    Task DisconnectAsync(CancellationToken cancellationToken);
 }

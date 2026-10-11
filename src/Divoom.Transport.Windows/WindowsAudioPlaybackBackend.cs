@@ -5,7 +5,7 @@ namespace Divoom;
 /// <summary>Uses an explicitly selected, OS-paired audio endpoint; never falls back to the default output.</summary>
 public sealed class WindowsAudioPlaybackBackend(string device) : IAudioPlaybackBackend
 {
-    public async Task<IAudioPlaybackSession> OpenAsync(Uri source, double volume, CancellationToken cancellationToken = default)
+    public async Task<IAudioPlaybackSession> OpenAsync(Uri source, double volume, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!OperatingSystem.IsWindows()) throw new AudioUnavailableException("Windows audio requires Windows.");

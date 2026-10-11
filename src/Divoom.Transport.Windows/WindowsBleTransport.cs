@@ -26,7 +26,7 @@ public sealed class WindowsBleTransport : IDittoProTransport
         address = bluetoothAddress;
     }
 
-    public async Task ConnectAsync(CancellationToken cancellationToken = default)
+    public async Task ConnectAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (IsConnected && subscribed) return;
@@ -71,7 +71,7 @@ public sealed class WindowsBleTransport : IDittoProTransport
         }
     }
 
-    public async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (write is null || !IsConnected) throw new IOException("BLE is disconnected.");
@@ -83,7 +83,7 @@ public sealed class WindowsBleTransport : IDittoProTransport
     private void Receive(GattCharacteristic sender, GattValueChangedEventArgs args) =>
         NotificationReceived?.Invoke(args.CharacteristicValue.ToArray());
 
-    public async Task DisconnectAsync(CancellationToken cancellationToken = default)
+    public async Task DisconnectAsync(CancellationToken cancellationToken)
     {
         try
         {

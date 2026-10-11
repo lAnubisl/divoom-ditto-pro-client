@@ -48,12 +48,12 @@ public sealed class ClientTests
         await using (IDittoProClient client = new DittoProClient(transport, settings))
         {
             Assert.That(transport.ConnectCount == 0, Is.True, "Construction does not connect");
-            await client.SendImageAsync(image);
+            await client.SendImageAsync(image, cancellationToken: CancellationToken.None);
             Assert.That(transport.IsConnected && !transport.Disposed && transport.DisconnectCount == 0, Is.True, "Successful operation keeps connection open");
-            await client.SendImageAsync(image);
-            await client.SendCurrentDateTimeAsync(); await client.SendAnimationAsync(frames);
+            await client.SendImageAsync(image, cancellationToken: CancellationToken.None);
+            await client.SendCurrentDateTimeAsync( cancellationToken: CancellationToken.None); await client.SendAnimationAsync(frames, slot: 0, cancellationToken: CancellationToken.None);
             var beforeClock = transport.Packets.Count;
-            await client.ShowClockAsync();
+            await client.ShowClockAsync( cancellationToken: CancellationToken.None);
             Assert.That(transport.Packets.Count == beforeClock + 1 && transport.Packets[^1].AsSpan(11, 11).SequenceEqual(new byte[] { 0x45, 0x00, 1, 0, 1, 0, 0, 0, 0, 255, 0 }), Is.True, "Clock selects style zero in green without syncing time or changing startup settings");
             Assert.That(((FixedClock)settings.TimeProvider).Calls == 2, Is.True, "Current time sampled at initialization and explicit time request");
             Assert.That(transport.ConnectCount == 1 && transport.Packets.Count(p => p[11] == 0x7B) == 1 && transport.IsConnected, Is.True, "Operations reuse one initialized connection");
@@ -72,7 +72,7 @@ public sealed class ClientTests
             Assert.That(upload.All(p => BinaryPrimitives.ReadUInt32LittleEndian(p.AsSpan(9)) == inner.Length), Is.True, "Each chunk contains exact file size");
             Assert.That(upload.SelectMany(p => p[15..^2]).SequenceEqual(inner), Is.True, "Reassembled upload is exactly the animation file");
             Assert.That(transport.Writes.All(w => w.Length <= 20), Is.True, "Small negotiated MTU respected");
-            await Task.WhenAll(client.SendImageAsync(image), client.SendCurrentDateTimeAsync());
+            await Task.WhenAll(client.SendImageAsync(image, cancellationToken: CancellationToken.None), client.SendCurrentDateTimeAsync( cancellationToken: CancellationToken.None));
             Assert.That(transport.ConnectCount == 1 && transport.IsConnected && transport.DisconnectCount == 0, Is.True, "Concurrent operations serialize on the shared session");
             using var cancelledRequest = new CancellationTokenSource(); cancelledRequest.Cancel();
             await Assert.ThatAsync(async () => await client.SendImageAsync(image, cancelledRequest.Token), Throws.InstanceOf<OperationCanceledException>());
@@ -85,7 +85,7 @@ public sealed class ClientTests
             var disconnected = transport.DisconnectCount;
             await client.DisposeAsync();
             Assert.That(transport.Disposed && !transport.IsConnected && transport.DisconnectCount == disconnected, Is.True, "Dispose disconnects and is idempotent");
-            await Assert.ThatAsync(async () => await client.SendImageAsync(image), Throws.InstanceOf<ObjectDisposedException>());
+            await Assert.ThatAsync(async () => await client.SendImageAsync(image, cancellationToken: CancellationToken.None), Throws.InstanceOf<ObjectDisposedException>());
         }
         Assert.That(transport.Disposed && !transport.IsConnected, Is.True, "Transport disposed by client");
     }
@@ -95,10 +95,10 @@ public sealed class ClientTests
     {
         var transport = new FakeTransport();
         await using IDittoProClient client = new DittoProClient(transport, Options());
-        Assert.Throws<ArgumentOutOfRangeException>(() => client.ShowClockAsync(16, 0));
-        Assert.Throws<ArgumentOutOfRangeException>(() => client.ShowClockAsync(0, 0x1000000));
+        Assert.Throws<ArgumentOutOfRangeException>(() => client.ShowClockAsync(16, 0, cancellationToken: CancellationToken.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() => client.ShowClockAsync(0, 0x1000000, cancellationToken: CancellationToken.None));
         Assert.That(transport.ConnectCount, Is.Zero);
-        await client.ShowClockAsync(15, 0x123456);
+        await client.ShowClockAsync(15, 0x123456, cancellationToken: CancellationToken.None);
         Assert.That(transport.Packets[^1].AsSpan(11, 11).ToArray(),
             Is.EqualTo(new byte[] { 0x45, 0, 1, 15, 1, 0, 0, 0, 0x12, 0x34, 0x56 }));
         using var cancelled = new CancellationTokenSource();
@@ -115,9 +115,9 @@ public sealed class ClientTests
         var dropped = new FakeTransport();
         await using (IDittoProClient client = new DittoProClient(dropped, Options()))
         {
-            await client.SendImageAsync(image);
-            await dropped.DisconnectAsync(); // Simulate a remote connection loss.
-            await client.SendImageAsync(image);
+            await client.SendImageAsync(image, cancellationToken: CancellationToken.None);
+            await dropped.DisconnectAsync( cancellationToken: CancellationToken.None); // Simulate a remote connection loss.
+            await client.SendImageAsync(image, cancellationToken: CancellationToken.None);
             Assert.That(dropped.ConnectCount == 2 && dropped.Packets.Count(p => p[11] == 0x7B) == 2 && dropped.IsConnected, Is.True, "Lost connection reconnects and reinitializes");
         }
     }
@@ -129,7 +129,7 @@ public sealed class ClientTests
         await using (var client = new DittoProClient(transient, Options()))
         {
             var elapsed = System.Diagnostics.Stopwatch.StartNew();
-            await client.ShowClockAsync();
+            await client.ShowClockAsync( cancellationToken: CancellationToken.None);
             Assert.That(transient.ConnectCount == 3 && transient.DisconnectCount == 2 && transient.IsConnected, Is.True, "Third clock attempt succeeds after two transport failures");
             Assert.That(elapsed.Elapsed >= TimeSpan.FromSeconds(2), Is.True, "Retry waits one second between attempts");
         }
@@ -141,7 +141,7 @@ public sealed class ClientTests
         var connectFailure = new FakeTransport { ConnectFailuresRemaining = 1 };
         await using (var client = new DittoProClient(connectFailure, Options()))
         {
-            await client.ShowClockAsync();
+            await client.ShowClockAsync( cancellationToken: CancellationToken.None);
             Assert.That(connectFailure.ConnectCount == 2 && connectFailure.IsConnected, Is.True, "Connection failure is retried");
         }
     }
@@ -152,7 +152,7 @@ public sealed class ClientTests
         var animationFailure = new FakeTransport { UploadFailuresRemaining = 1 };
         await using (var client = new DittoProClient(animationFailure, Options()))
         {
-            await client.SendAnimationAsync(frames);
+            await client.SendAnimationAsync(frames, slot: 0, cancellationToken: CancellationToken.None);
             Assert.That(animationFailure.ConnectCount == 2 && animationFailure.Packets.Count(p => p[6] != 0 && p[11] == 0x8B) == 2, Is.True, "Partial animation restarts with a new announce and session");
             var lastUpload = animationFailure.Packets.FindLastIndex(p => p[6] != 0 && p[11] == 0x8B);
             Assert.That(animationFailure.Packets.Skip(lastUpload + 1).SelectMany(p => p[15..^2]).SequenceEqual(inner), Is.True, "Retried animation resends the complete stream");
@@ -178,10 +178,10 @@ public sealed class ClientTests
         var clockTimeout = new FakeTransport { SuppressClockAcknowledgement = true };
         await using (var client = new DittoProClient(clockTimeout, Options()))
         {
-            await Assert.ThatAsync(async () => await client.ShowClockAsync(), Throws.InstanceOf<TimeoutException>());
+            await Assert.ThatAsync(async () => await client.ShowClockAsync( cancellationToken: CancellationToken.None), Throws.InstanceOf<TimeoutException>());
             Assert.That(!clockTimeout.IsConnected, Is.True, "Clock timeout disconnects uncertain session");
             clockTimeout.SuppressClockAcknowledgement = false;
-            await client.ShowClockAsync();
+            await client.ShowClockAsync( cancellationToken: CancellationToken.None);
             Assert.That(clockTimeout.ConnectCount == 4 && clockTimeout.IsConnected, Is.True, "Clock uses three attempts, then reconnects on the next request");
         }
     }
@@ -192,9 +192,9 @@ public sealed class ClientTests
         var retry = new FakeTransport { SuppressImageAcknowledgement = true };
         await using (var client = new DittoProClient(retry, Options()))
         {
-            await Assert.ThatAsync(async () => await client.SendImageAsync(image), Throws.InstanceOf<TimeoutException>());
+            await Assert.ThatAsync(async () => await client.SendImageAsync(image, cancellationToken: CancellationToken.None), Throws.InstanceOf<TimeoutException>());
             Assert.That(!retry.IsConnected, Is.True, "Timeout disconnects uncertain session");
-            retry.SuppressImageAcknowledgement = false; await client.SendImageAsync(image);
+            retry.SuppressImageAcknowledgement = false; await client.SendImageAsync(image, cancellationToken: CancellationToken.None);
             Assert.That(retry.ConnectCount == 4 && retry.Packets.Count(p => p[11] == 0x7B) == 4, Is.True, "Three failed attempts and the next request each initialize a new session");
         }
     }
@@ -204,7 +204,7 @@ public sealed class ClientTests
     {
         await using (var client = new DittoProClient(new FakeTransport { RejectTime = true }, Options()))
         {
-            await Assert.ThatAsync(async () => await client.SendCurrentDateTimeAsync(), Throws.InstanceOf<IOException>());
+            await Assert.ThatAsync(async () => await client.SendCurrentDateTimeAsync( cancellationToken: CancellationToken.None), Throws.InstanceOf<IOException>());
         }
     }
 
@@ -216,9 +216,9 @@ public sealed class ClientTests
             var denied = new FakeTransport { RejectAnimation = !missingReady, SuppressAnimationReady = missingReady };
             await using var client = new DittoProClient(denied, Options());
             if (missingReady)
-                await Assert.ThatAsync(async () => await client.SendAnimationAsync(frames), Throws.InstanceOf<TimeoutException>());
+                await Assert.ThatAsync(async () => await client.SendAnimationAsync(frames, slot: 0, cancellationToken: CancellationToken.None), Throws.InstanceOf<TimeoutException>());
             else
-                await Assert.ThatAsync(async () => await client.SendAnimationAsync(frames), Throws.InstanceOf<IOException>());
+                await Assert.ThatAsync(async () => await client.SendAnimationAsync(frames, slot: 0, cancellationToken: CancellationToken.None), Throws.InstanceOf<IOException>());
             Assert.That(!denied.Packets.Any(p => p[6] == 0 && p[7] == 0x8B), Is.True, "No upload before explicit start permission");
         }
     }
@@ -232,7 +232,7 @@ public sealed class ClientTests
             using var source = new CancellationTokenSource(); source.Cancel();
             await Assert.ThatAsync(async () => await client.SendImageAsync(image, source.Token), Throws.InstanceOf<OperationCanceledException>());
             Assert.That(cancelled.ConnectCount == 0, Is.True, "Cancelled operation does not connect");
-            await Assert.ThatAsync(async () => await client.SendAnimationAsync([]), Throws.InstanceOf<ArgumentException>());
+            await Assert.ThatAsync(async () => await client.SendAnimationAsync([], slot: 0, cancellationToken: CancellationToken.None), Throws.InstanceOf<ArgumentException>());
         }
     }
 

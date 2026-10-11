@@ -1,6 +1,6 @@
 using Divoom;
 
-internal sealed class FakeAudioSession(bool autoPlay = true) : IAudioPlaybackSession
+internal sealed class FakeAudioSession(bool autoPlay) : IAudioPlaybackSession
 {
     public event Action<string>? StateChanged;
     public string State { get; private set; } = "starting";

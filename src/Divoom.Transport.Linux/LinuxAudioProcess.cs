@@ -14,8 +14,9 @@ internal static class LinuxAudioProcess
     };
 
     public static ProcessStartInfo CreateStartInfo(string device, double volume, string socketPath,
-        IEnumerable<KeyValuePair<string, string?>>? environment = null)
+        IEnumerable<KeyValuePair<string, string?>> environment)
     {
+        ArgumentNullException.ThrowIfNull(environment);
         var start = new ProcessStartInfo("mpv")
         {
             UseShellExecute = false,
@@ -31,7 +32,7 @@ internal static class LinuxAudioProcess
             "--demuxer-max-bytes=4194304", "--demuxer-max-back-bytes=1048576", "--cache-secs=5"
         }) start.ArgumentList.Add(argument);
 
-        var retained = (environment ?? start.Environment).Where(pair => AllowedEnvironment.Contains(pair.Key)).ToArray();
+        var retained = environment.Where(pair => AllowedEnvironment.Contains(pair.Key)).ToArray();
         start.Environment.Clear();
         foreach (var pair in retained) start.Environment[pair.Key] = pair.Value;
         // Keep PipeWire from moving this stream to another device when its target disappears.

@@ -27,7 +27,7 @@ public sealed class WindowsRfcommTransport : IDittoProTransport
     public int MaxWriteSize => connected ? 138 : 0;
     public event Action<ReadOnlyMemory<byte>>? NotificationReceived;
 
-    public async Task ConnectAsync(CancellationToken cancellationToken = default)
+    public async Task ConnectAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (connected) return;
@@ -87,7 +87,7 @@ public sealed class WindowsRfcommTransport : IDittoProTransport
         finally { connected = false; }
     }
 
-    public async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (!connected || writer is null) throw new IOException("RFCOMM disconnected.");
@@ -96,7 +96,7 @@ public sealed class WindowsRfcommTransport : IDittoProTransport
         if (await writer.StoreAsync().AsTask(cancellationToken) != data.Length) throw new IOException("Incomplete RFCOMM write.");
     }
 
-    public async Task DisconnectAsync(CancellationToken cancellationToken = default)
+    public async Task DisconnectAsync(CancellationToken cancellationToken)
     {
         connected = false;
         receiveCancellation?.Cancel();
@@ -113,6 +113,6 @@ public sealed class WindowsRfcommTransport : IDittoProTransport
     {
         if (disposed) return;
         disposed = true;
-        await DisconnectAsync();
+        await DisconnectAsync( cancellationToken: CancellationToken.None);
     }
 }

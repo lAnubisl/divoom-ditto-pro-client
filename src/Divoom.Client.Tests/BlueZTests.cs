@@ -31,33 +31,33 @@ public sealed class BlueZTests
         transport.NotificationReceived += bytes => received.TrySetResult(bytes.ToArray());
         try
         {
-            await transport.ConnectAsync();
+            await transport.ConnectAsync( cancellationToken: CancellationToken.None);
             Assert.That(transport.IsConnected && transport.MaxWriteSize == 20 && notify.StartCount == 1, Is.True, "BlueZ connection, conservative MTU and StartNotify");
-            await transport.ConnectAsync();
+            await transport.ConnectAsync( cancellationToken: CancellationToken.None);
             Assert.That(device.ConnectCount == 1 && notify.StartCount == 1, Is.True, "BlueZ connection reused");
-            await transport.WriteAsync(new byte[] { 1, 2, 3 });
+            await transport.WriteAsync(new byte[] { 1, 2, 3 }, cancellationToken: CancellationToken.None);
             Assert.That(write.Writes.Single().SequenceEqual(new byte[] { 1, 2, 3 }) && write.WriteType == "request", Is.True, "WriteValue uses byte array and ATT request option");
             notify.Emit(new Dictionary<string, object> { ["Value"] = new byte[] { 4, 5, 6 } });
             Assert.That((await received.Task.WaitAsync(TimeSpan.FromSeconds(2))).SequenceEqual(new byte[] { 4, 5, 6 }), Is.True, "PropertiesChanged forwards characteristic bytes");
-            await Assert.ThatAsync(async () => await transport.WriteAsync(new byte[21]), Throws.InstanceOf<ArgumentOutOfRangeException>());
-            await transport.DisconnectAsync();
+            await Assert.ThatAsync(async () => await transport.WriteAsync(new byte[21], cancellationToken: CancellationToken.None), Throws.InstanceOf<ArgumentOutOfRangeException>());
+            await transport.DisconnectAsync( cancellationToken: CancellationToken.None);
             Assert.That(!transport.IsConnected && transport.MaxWriteSize == 0 && notify.StopCount == 1 && device.DisconnectCount == 1, Is.True, "StopNotify, device disconnect and state reset");
-            await transport.ConnectAsync();
+            await transport.ConnectAsync( cancellationToken: CancellationToken.None);
             Assert.That(transport.IsConnected && device.ConnectCount == 2, Is.True, "Reconnect on a new D-Bus session");
             device.Emit(new Dictionary<string, object> { ["Connected"] = false });
             using var lostTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             while (transport.IsConnected) await Task.Delay(10, lostTimeout.Token);
-            await Assert.ThatAsync(async () => await transport.WriteAsync(new byte[] { 1 }), Throws.InstanceOf<IOException>());
+            await Assert.ThatAsync(async () => await transport.WriteAsync(new byte[] { 1 }, cancellationToken: CancellationToken.None), Throws.InstanceOf<IOException>());
             await transport.DisposeAsync();
             await transport.DisposeAsync();
             Assert.That(device.DisconnectCount == 2 && notify.StopCount == 2, Is.True, "BlueZ disposal disconnects once and is idempotent");
-            await Assert.ThatAsync(async () => await transport.ConnectAsync(), Throws.InstanceOf<ObjectDisposedException>());
+            await Assert.ThatAsync(async () => await transport.ConnectAsync( cancellationToken: CancellationToken.None), Throws.InstanceOf<ObjectDisposedException>());
         }
         finally { await transport.DisposeAsync(); }
         write.Properties["MTU"] = (ushort)185;
         await using (var negotiated = new BlueZBleTransport("B121814BE642", options))
         {
-            await negotiated.ConnectAsync();
+            await negotiated.ConnectAsync( cancellationToken: CancellationToken.None);
             Assert.That(negotiated.MaxWriteSize == 182, Is.True, "Negotiated MTU minus ATT header");
         }
         write.Properties.Remove("MTU");
@@ -77,22 +77,22 @@ public sealed class BlueZTests
         };
         await using (var stableAdapter = new BlueZBleTransport("B1:21:81:4B:E6:42", stableOptions))
         {
-            await stableAdapter.ConnectAsync();
+            await stableAdapter.ConnectAsync( cancellationToken: CancellationToken.None);
             Assert.That(stableAdapter.IsConnected, Is.True, "Controller address resolves to its current hci index");
-            await stableAdapter.DisconnectAsync();
-            await stableAdapter.ConnectAsync();
+            await stableAdapter.DisconnectAsync( cancellationToken: CancellationToken.None);
+            await stableAdapter.ConnectAsync( cancellationToken: CancellationToken.None);
             Assert.That(stableAdapter.IsConnected, Is.True, "Controller address is resolved again on reconnect");
         }
         var beforeMissingAdapter = device.ConnectCount;
         await using (var missingAdapter = new BlueZBleTransport("B1:21:81:4B:E6:42",
             new BlueZTransportOptions { BusAddress = boundAddress, Adapter = "11:22:33:44:55:66" }))
         {
-            await Assert.ThatAsync(async () => await missingAdapter.ConnectAsync(), Throws.InstanceOf<IOException>());
+            await Assert.ThatAsync(async () => await missingAdapter.ConnectAsync( cancellationToken: CancellationToken.None), Throws.InstanceOf<IOException>());
             Assert.That(device.ConnectCount == beforeMissingAdapter, Is.True, "Missing controller does not fall back to another radio");
         }
         root.Objects.Remove(new("/org/bluez/hci1"));
         var failingCleanup = new BlueZBleTransport("B1:21:81:4B:E6:42", options);
-        await failingCleanup.ConnectAsync();
+        await failingCleanup.ConnectAsync( cancellationToken: CancellationToken.None);
         var beforeCleanup = device.DisconnectCount;
         notify.OnStop = () => throw new DBusException("org.bluez.Error.Failed", "Test StopNotify failure");
         await Assert.ThatAsync(async () => await failingCleanup.DisposeAsync(), Throws.InstanceOf<DBusException>());
@@ -105,7 +105,7 @@ public sealed class BlueZTests
         adapter.OnDiscovery = () => root.Objects[new(DevicePath)] = deviceObject;
         await using (var discovered = new BlueZBleTransport("B1:21:81:4B:E6:42", options))
         {
-            await discovered.ConnectAsync();
+            await discovered.ConnectAsync( cancellationToken: CancellationToken.None);
             Assert.That(discovered.IsConnected && adapter.DiscoveryStarts == 1 && adapter.DiscoveryStops == 1, Is.True, "Unknown device is discovered and own discovery session stopped");
         }
         adapter.OnDiscovery = null;
@@ -113,7 +113,7 @@ public sealed class BlueZTests
         adapter.Properties["Powered"] = false;
         await using (var disabled = new BlueZBleTransport("B1:21:81:4B:E6:42", options))
         {
-            await Assert.ThatAsync(async () => await disabled.ConnectAsync(), Throws.InstanceOf<IOException>());
+            await Assert.ThatAsync(async () => await disabled.ConnectAsync( cancellationToken: CancellationToken.None), Throws.InstanceOf<IOException>());
             Assert.That(!disabled.IsConnected && device.ConnectCount == connectionCount, Is.True, "Powered-off adapter fails before connecting");
         }
         adapter.Properties["Powered"] = true;
@@ -121,7 +121,7 @@ public sealed class BlueZTests
         var disconnectCount = device.DisconnectCount;
         await using (var unreliable = new BlueZBleTransport("B1:21:81:4B:E6:42", options))
         {
-            await Assert.ThatAsync(async () => await unreliable.ConnectAsync(), Throws.InstanceOf<IOException>());
+            await Assert.ThatAsync(async () => await unreliable.ConnectAsync( cancellationToken: CancellationToken.None), Throws.InstanceOf<IOException>());
             Assert.That(!unreliable.IsConnected && device.DisconnectCount == disconnectCount + 1, Is.True, "Unsupported GATT flags clean up device connection");
         }
         write.Properties["Flags"] = new[] { "write" };
@@ -147,7 +147,7 @@ public sealed class BlueZTests
         disconnectCount = device.DisconnectCount;
         await using (var unresolved = new BlueZBleTransport("B1:21:81:4B:E6:42", readinessOptions))
         {
-            await Assert.ThatAsync(async () => await unresolved.ConnectAsync(), Throws.InstanceOf<TimeoutException>());
+            await Assert.ThatAsync(async () => await unresolved.ConnectAsync( cancellationToken: CancellationToken.None), Throws.InstanceOf<TimeoutException>());
             Assert.That(!unresolved.IsConnected && device.DisconnectCount == disconnectCount + 1, Is.True, "Service-resolution timeout disconnects pending device");
         }
         device.ResolveServices = true;
@@ -156,7 +156,7 @@ public sealed class BlueZTests
         var discoveryStops = adapter.DiscoveryStops;
         await using (var missing = new BlueZBleTransport("B1:21:81:4B:E6:42", timedOptions))
         {
-            await Assert.ThatAsync(async () => await missing.ConnectAsync(), Throws.InstanceOf<TimeoutException>());
+            await Assert.ThatAsync(async () => await missing.ConnectAsync( cancellationToken: CancellationToken.None), Throws.InstanceOf<TimeoutException>());
             Assert.That(!missing.IsConnected && adapter.DiscoveryStops == discoveryStops + 1, Is.True, "Discovery timeout releases own discovery session");
         }
         root.Objects[new(DevicePath)] = deviceObject;
